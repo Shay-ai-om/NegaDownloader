@@ -14,8 +14,6 @@ NegaDownloader is a self-hosted web interface for yt-dlp. It provides a persiste
 
 4. Open `http://<server-ip>:8080` and sign in with `NEGADOWNLOADER_PASSWORD`.
 
-When upgrading an existing Compose installation, stop and remove the old `youlogger` Compose project before starting this renamed project so its port `8080` is released. Keep the `/config` and `/downloads` host directories; removing the container does not require deleting either data directory. If necessary, run `docker compose -p youlogger down` with the existing `.env`, then start the new project with the command above. In Unraid, stop/remove the old container and create the new `negadownloader` container with the same volume mappings.
-
 Example Unraid `.env` values:
 
 ```dotenv
@@ -56,8 +54,6 @@ The embedded browser runs inside NegaDownloader. The app does not receive the pa
 - `NEGADOWNLOADER_DOWNLOAD_TIMEOUT_SECONDS`: per-job timeout, default `21600` seconds.
 - `PUID` / `PGID`: container identity for host file ownership; Unraid commonly uses `99` / `100`.
 
-Old `YOULOGGER_*` environment names remain accepted for existing `.env` files. New installations should use `NEGADOWNLOADER_*` names.
-
 ## Persistent files
 
 - `/config/youlogger.sqlite3`: jobs, settings, and queue state. The existing filename is kept to preserve data when upgrading from YouLogger.
@@ -67,4 +63,4 @@ Old `YOULOGGER_*` environment names remain accepted for existing `.env` files. N
 - `/config/auth/temporary/`: short-lived per-job cookie exports.
 - `/downloads/<subfolder>/<job-id>/`: downloaded media.
 
-The `/config` and `/downloads` bind mounts survive image rebuilds. When updating, run `docker compose up -d --build` from the project directory. The Compose project and container are now named `negadownloader`; existing `YOULOGGER_*` settings remain supported during the transition.
+The `/config` and `/downloads` bind mounts survive image rebuilds. When updating, run `docker compose up -d --build` from the project directory. 
