@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登入 · NegaDownloader</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="brand-mark"><span>N</span><i></i></div>
+    <p class="eyebrow"><span class="eyebrow-line"></span> PRIVATE MEDIA TOOL</p>
+    <h1>登入 NegaDownloader</h1>
+    <p class="muted">輸入容器設定的管理密碼以繼續。</p>
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="password">管理密碼</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <button class="primary" type="submit">登入</button>
+    </form>
+  </main>
+</body>
+</html>

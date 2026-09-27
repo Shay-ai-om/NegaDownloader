@@ -1,0 +1,33 @@
+name: negadownloader
+
+services:
+  negadownloader:
+    build: .
+    container_name: negadownloader
+    restart: unless-stopped
+    environment:
+      NEGADOWNLOADER_PASSWORD: ${NEGADOWNLOADER_PASSWORD:-${YOULOGGER_PASSWORD:-}}
+      NEGADOWNLOADER_COOKIE_SECURE: ${NEGADOWNLOADER_COOKIE_SECURE:-${YOULOGGER_COOKIE_SECURE:-false}}
+      NEGADOWNLOADER_CONFIG_DIR: /config
+      NEGADOWNLOADER_DOWNLOAD_DIR: /downloads
+      PUID: ${PUID:-99}
+      PGID: ${PGID:-100}
+      NEGADOWNLOADER_CHROMIUM_SANDBOX: ${NEGADOWNLOADER_CHROMIUM_SANDBOX:-${YOULOGGER_CHROMIUM_SANDBOX:-true}}
+      NEGADOWNLOADER_DOWNLOAD_TIMEOUT_SECONDS: ${NEGADOWNLOADER_DOWNLOAD_TIMEOUT_SECONDS:-${YOULOGGER_DOWNLOAD_TIMEOUT_SECONDS:-21600}}
+      NEGADOWNLOADER_DOWNLOAD_SUBDIR: ${NEGADOWNLOADER_DOWNLOAD_SUBDIR:-}
+      DISPLAY: :99
+    ports:
+      - "${NEGADOWNLOADER_PORT:-${YOULOGGER_PORT:-8080}}:8080"
+    volumes:
+      - "${NEGADOWNLOADER_CONFIG:-${YOULOGGER_CONFIG:-./data/config}}:/config"
+      - "${NEGADOWNLOADER_DOWNLOADS:-${YOULOGGER_DOWNLOADS:-./downloads}}:/downloads"
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./seccomp_profile.json

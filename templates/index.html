@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>NegaDownloader</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="NegaDownloader 首頁">
+      <span class="brand-mark"><span>N</span><i></i></span>
+      <span class="brand-name">Nega<span>Downloader</span></span>
+    </a>
+    <div class="topbar-right"><span class="instance-badge"><i></i> PRIVATE INSTANCE</span>
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="quiet" type="submit">登出 <span aria-hidden="true">↗</span></button></form>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="eyebrow-line"></span> PERSONAL MEDIA WORKSPACE</p>
+        <h1>喜歡的內容，<br><span>好好收藏。</span></h1>
+        <p class="hero-subtitle">貼上影片連結，剩下的交給 NegaDownloader。</p>
+      </div>
+      <div class="hero-stamp" aria-hidden="true"><span>ND</span><i></i><small>YOUR MEDIA<br>YOUR RULES</small></div>
+    </section>
+
+    <section class="panel add-panel">
+      <div class="panel-kicker"><span class="step-index">01</span><span>NEW DOWNLOAD</span></div>
+      <form id="download-form" class="download-form">
+        <label class="sr-only" for="video-url">影片網址</label>
+        <span class="url-glyph" aria-hidden="true">↳</span>
+        <input id="video-url" type="url" placeholder="貼上影片網址…" maxlength="4096" required>
+        <button class="primary" type="submit"><span>加入佇列</span><b aria-hidden="true">↗</b></button>
+      </form>
+      <div class="form-foot"><p>只下載你有權觀看並可保存的內容。</p><div class="privacy-note"><i></i>網站密碼不會交給 NegaDownloader</div></div>
+      <div id="form-message" class="form-message" role="status"></div>
+    </section>
+
+    <section class="section-heading jobs-heading">
+      <div class="section-title"><p class="eyebrow"><span class="eyebrow-line"></span> ACTIVITY</p><h2>佇列 <span>&amp;</span> 紀錄</h2></div>
+      <div class="heading-actions"><span id="refresh-indicator" class="live-indicator"><i></i>即時更新</span><button id="clear-queue" class="quiet small-button" type="button">清空佇列</button><button id="clear-history" class="quiet small-button" type="button">清除紀錄</button></div>
+    </section>
+    <section id="jobs" class="jobs-list" aria-live="polite">
+      {% for job in jobs %}
+      <article class="job-card" data-job-id="{{ job.id }}">
+        <div class="job-main">
+          <div class="job-topline"><span class="status status-{{ job.status|lower }}">{{ {'QUEUED':'排隊中','RUNNING':'下載中','NEEDS_AUTH':'需要登入','SUCCEEDED':'完成','FAILED':'失敗','CANCELLED':'已取消'}.get(job.status, job.status) }}</span><span class="job-date">{{ job.created_at }}</span></div>
+          <div class="job-url">{{ job.url }}</div>
+          {% if job.status == 'RUNNING' %}<div class="progress"><span style="width: {{ job.progress }}%"></span></div><div class="progress-label">{{ job.progress|round(1) }}%</div>{% endif %}
+          {% if job.error %}<div class="job-error">{{ job.error }}</div>{% endif %}
+        </div>
+        <div class="job-actions">
+          {% if job.status == 'SUCCEEDED' %}<a class="button primary small-button" href="/api/jobs/{{ job.id }}/file">下載檔案 <span aria-hidden="true">↓</span></a>{% endif %}
+          {% if job.can_login and job.status in ['NEEDS_AUTH', 'FAILED'] %}<button class="secondary small-button login-action" data-job-id="{{ job.id }}">登入並重試</button>{% endif %}
+          {% if job.status in ['QUEUED', 'RUNNING'] %}<button class="quiet small-button cancel-action" data-job-id="{{ job.id }}">取消</button>{% endif %}
+        </div>
+      </article>
+      {% else %}
+      <div class="empty-state"><div class="empty-icon">↘</div><h3>這裡還沒有下載工作</h3><p>加入影片連結後，進度會顯示在這裡。</p></div>
+      {% endfor %}
+    </section>
+
+    <section class="settings-grid">
+      <article class="panel settings-panel path-panel">
+        <div class="panel-kicker"><span class="step-index">02</span><span>STORAGE</span></div>
+        <h2>下載位置</h2>
+        <p class="settings-copy">部署時掛載主機資料夾；這裡可切換掛載目錄底下的子資料夾。只影響之後新增的工作。</p>
+        <form id="download-path-form" class="path-form">
+          <label for="download-path">子資料夾</label>
+          <div class="path-input-row"><span class="path-prefix">/downloads/</span><input id="download-path" name="path" type="text" value="{{ download_subdir }}" placeholder="留空代表根目錄" maxlength="1024"><button class="secondary" type="submit">儲存位置</button></div>
+          <p class="path-result">容器內路徑 <code>{{ download_root }}{% if download_subdir %}/{{ download_subdir }}{% endif %}</code></p>
+          <p id="download-path-message" class="form-message" role="status"></p>
+        </form>
+      </article>
+
+      <article class="panel settings-panel cookie-panel">
+        <div class="panel-kicker"><span class="step-index">03</span><span>AUTH FALLBACK</span><span id="cookie-status" class="status-pill {{ 'configured' if has_imported_cookies else '' }}">{{ '已設定' if has_imported_cookies else '尚未設定' }}</span></div>
+        <h2>Cookies 備援</h2>
+        <p class="settings-copy">匯入 Mozilla/Netscape 格式的 cookies.txt。Cookies 會存入設定目錄並視同登入憑證，請保護好設定目錄。</p>
+        <form id="cookie-form" class="cookie-form">
+          <label class="file-picker" for="cookie-file"><span>選擇 cookies.txt</span><input id="cookie-file" type="file" accept=".txt,text/plain" required></label>
+          <button class="secondary" type="submit">匯入 / 替換</button>
+          <button id="remove-cookies" class="quiet" type="button" {% if not has_imported_cookies %}disabled{% endif %}>移除</button>
+        </form>
+        <div id="cookie-message" class="form-message" role="status"></div>
+      </article>
+    </section>
+
+    <footer class="footer-note"><span>NegaDownloader <b>·</b> PRIVATE MEDIA TOOL</span><span>請透過可信任網路使用；外網存取請使用 HTTPS。</span></footer>
+  </main>
+
+  <div id="browser-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="browser-title">
+      <header class="modal-header"><div><p class="eyebrow"><span class="eyebrow-line"></span> INSTAGRAM SESSION</p><h2 id="browser-title">在遠端瀏覽器登入</h2></div><button class="icon-button" type="button" data-close-modal aria-label="關閉">×</button></header>
+      <p class="muted modal-copy">此瀏覽器執行於 NegaDownloader 容器中。請在 Instagram 頁面完成登入與驗證，再按「使用登入狀態重試」。</p>
+      <iframe id="browser-frame" title="遠端 Instagram 瀏覽器" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+      <div id="browser-message" class="form-message" role="status"></div>
+      <footer class="modal-actions"><button id="retry-with-auth" class="primary" type="button">使用登入狀態重試 <b aria-hidden="true">↗</b></button><button class="secondary" type="button" data-close-modal>稍後處理</button></footer>
+    </section>
+  </div>
+</body>
+</html>

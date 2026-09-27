@@ -1,0 +1,1 @@
+"""NegaDownloader application package."""
