@@ -56,7 +56,7 @@ The embedded browser runs inside NegaDownloader. The app does not receive the pa
 
 ## Persistent files
 
-- `/config/youlogger.sqlite3`: jobs, settings, and queue state. The existing filename is kept to preserve data when upgrading from YouLogger.
+- `/config/youlogger.sqlite3`: jobs, settings, and queue state.
 - `/config/session.secret`: WebUI session signing key.
 - `/config/auth/imported-cookies.txt`: optional filtered cookie jar.
 - `/config/auth/instagram-browser/`: dedicated Chromium profile.
