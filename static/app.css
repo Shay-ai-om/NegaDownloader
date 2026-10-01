@@ -144,6 +144,13 @@ h2 { margin-bottom: 0; font-size: 23px; font-weight: 700; letter-spacing: -.055e
 .empty-state p { margin: 0; font-size: 12px; }
 .empty-icon { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto; border: 1px solid #606e45; border-radius: 12px; color: var(--lime); background: #242b1c; font: 22px var(--mono); }
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 48px; }
+.updater-panel { grid-column: 1 / -1; }
+.engine-version { color: var(--muted); font-size: 12px; }
+.engine-version strong { margin-left: 10px; color: var(--ink); font-family: var(--mono); overflow-wrap: anywhere; }
+.updater-form > label { display: block; margin-bottom: 7px; color: #b4baac; font-size: 10px; font-weight: 700; }
+.updater-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.updater-actions select { max-width: 100%; min-height: 42px; padding: 8px 12px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.updater-actions select:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
 .settings-panel { min-width: 0; padding: 21px; }
 .settings-panel .panel-kicker { min-height: 22px; margin-bottom: 17px; }
 .settings-panel h2 { margin-bottom: 8px; font-size: 18px; }

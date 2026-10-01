@@ -4,11 +4,21 @@
   const formMessage = document.getElementById('form-message');
   const cookieMessage = document.getElementById('cookie-message');
   const cookieStatus = document.getElementById('cookie-status');
+  const cookieDomains = document.getElementById('cookie-domains');
   const pathMessage = document.getElementById('download-path-message');
   const pathInput = document.getElementById('download-path');
   const browserModal = document.getElementById('browser-modal');
   const browserFrame = document.getElementById('browser-frame');
   const browserMessage = document.getElementById('browser-message');
+  const engineForm = document.getElementById('yt-dlp-form');
+  const engineVersion = document.getElementById('yt-dlp-version');
+  const engineSource = document.getElementById('yt-dlp-source');
+  const engineChannel = document.getElementById('yt-dlp-channel');
+  const engineMessage = document.getElementById('yt-dlp-message');
+  const engineUpdate = document.getElementById('update-yt-dlp');
+  const engineRollback = document.getElementById('rollback-yt-dlp');
+  let engineRequestPending = false;
+  let engineStatus = null;
   let activeAuthJob = null;
   let timer = null;
   const autoPromptedJobs = new Set();
@@ -27,6 +37,58 @@
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   }
+
+  function renderEngine(data) {
+    engineStatus = data;
+    const busy = Boolean(data.busy || engineRequestPending);
+    engineVersion.textContent = `${data.version} (${data.channel === 'image' ? '內建' : data.channel})`;
+    engineSource.textContent = data.source === 'persistent' ? '已保存版本' : '內建版本';
+    engineSource.classList.toggle('configured', data.source === 'persistent');
+    engineUpdate.disabled = busy;
+    engineUpdate.textContent = busy ? '處理中…' : '更新 yt-dlp';
+    engineChannel.disabled = busy;
+    engineRollback.disabled = busy || !data.rollback_available;
+    engineRollback.title = data.rollback_version ? `回復至 ${data.rollback_version}` : '尚無可回復版本';
+    engineMessage.textContent = [data.message, data.warning].filter(Boolean).join(' ');
+    engineMessage.style.color = data.phase === 'FAILED' || data.warning ? 'var(--red)' : busy ? 'var(--amber)' : 'var(--green)';
+  }
+
+  async function refreshEngine() {
+    if (!engineForm) return;
+    try {
+      renderEngine(await api('/api/settings/yt-dlp'));
+    } catch (error) {
+      engineMessage.textContent = error.message;
+      engineMessage.style.color = 'var(--red)';
+    }
+  }
+
+  async function changeEngine(action) {
+    if (engineRequestPending || engineStatus?.busy) return;
+    engineRequestPending = true;
+    if (engineStatus) renderEngine(engineStatus);
+    try {
+      const options = {method: 'POST'};
+      if (action === 'update') {
+        options.headers = {'Content-Type': 'application/json'};
+        options.body = JSON.stringify({channel: engineChannel.value});
+      }
+      const result = await api(`/api/settings/yt-dlp/${action}`, options);
+      engineRequestPending = false;
+      renderEngine(result);
+    } catch (error) {
+      engineRequestPending = false;
+      if (engineStatus) renderEngine(engineStatus);
+      engineMessage.textContent = error.message;
+      engineMessage.style.color = 'var(--red)';
+    }
+  }
+
+  engineForm?.addEventListener('submit', event => {
+    event.preventDefault();
+    changeEngine('update');
+  });
+  engineRollback?.addEventListener('click', () => changeEngine('rollback'));
 
   function renderJobs(jobs) {
     if (!jobs.length) {
@@ -57,11 +119,12 @@
         cookieStatus.classList.toggle('configured', configured);
         cookieStatus.textContent = configured ? '已設定' : '尚未設定';
         document.getElementById('remove-cookies').disabled = !configured;
+        if (cookieDomains) cookieDomains.textContent = data.cookie_domains?.length ? `已保存網域：${data.cookie_domains.join('、')}` : '尚未保存有效 cookies。';
       }
-      const pendingAuth = data.jobs.find(job => job.status === 'NEEDS_AUTH' && job.can_login && !job.cookies_configured && !autoPromptedJobs.has(job.id));
+      const pendingAuth = data.jobs.find(job => ['NEEDS_AUTH', 'FAILED'].includes(job.status) && job.can_login && !job.cookies_configured && !autoPromptedJobs.has(job.id));
       if (pendingAuth && browserModal?.hidden) {
         autoPromptedJobs.add(pendingAuth.id);
-        openAuthBrowser(pendingAuth.id);
+        await openAuthBrowser(pendingAuth.id);
       }
     } catch (error) {
       if (error.message.includes('登入')) window.location.assign('/login');
@@ -82,15 +145,18 @@
   document.getElementById('cookie-form')?.addEventListener('submit', async event => {
     event.preventDefault();
     cookieMessage.textContent = '';
-    const file = document.getElementById('cookie-file').files[0];
-    if (!file) return;
-    const data = new FormData(); data.append('file', file);
+    const files = document.getElementById('cookie-file').files;
+    if (!files.length) return;
+    const data = new FormData();
+    for (const file of files) data.append('file', file);
     try {
-      await api('/api/cookies', { method: 'POST', body: data });
+      const result = await api('/api/cookies', { method: 'POST', body: data });
       cookieStatus.textContent = '已設定'; cookieStatus.classList.add('configured');
       document.getElementById('remove-cookies').disabled = false;
       document.getElementById('cookie-file').value = '';
-      cookieMessage.style.color = 'var(--green)'; cookieMessage.textContent = 'cookies.txt 已匯入。';
+      cookieMessage.style.color = 'var(--green)'; cookieMessage.textContent = 'Cookies 已合併匯入，其他網站的登入狀態已保留。';
+      if (cookieDomains) cookieDomains.textContent = `已保存網域：${result.cookie_domains.join('、')}`;
+      await refreshJobs();
     } catch (error) { cookieMessage.style.color = 'var(--red)'; cookieMessage.textContent = error.message; }
   });
 
@@ -183,7 +249,7 @@
       const path = `api/browser/ws?ticket=${encodeURIComponent(result.ticket)}`;
       const params = new URLSearchParams({autoconnect:'true', resize:'remote', path});
       browserFrame.src = `/novnc/vnc.html?${params.toString()}`;
-      browserMessage.textContent = '請在上方瀏覽器登入 Instagram；完成後再按下方按鈕。';
+      browserMessage.textContent = '請在上方瀏覽器完成此網站的登入與驗證，再按「使用登入狀態重試」。';
     } catch (error) {
       browserMessage.textContent = error.message;
     }
@@ -209,7 +275,8 @@
 
   if (jobsRoot) {
     refreshJobs();
-    timer = window.setInterval(refreshJobs, 3000);
+    refreshEngine();
+    timer = window.setInterval(async () => { await Promise.all([refreshJobs(), refreshEngine()]); }, 3000);
     window.addEventListener('pagehide', () => window.clearInterval(timer), {once:true});
   }
 })();

@@ -10,6 +10,7 @@ from playwright.async_api import BrowserContext, Playwright, async_playwright
 from app.services.storage import AUTH_DIR
 
 
+# Keep the existing directory so upgrades preserve existing login sessions.
 PROFILE_DIR = AUTH_DIR / "instagram-browser"
 
 
@@ -78,10 +79,12 @@ class BrowserSession:
             await self._page.goto(url, wait_until="domcontentloaded", timeout=45000)
             return await self._page.evaluate("navigator.userAgent")
 
-    async def export_cookies(self) -> tuple[list[dict[str, Any]], str | None]:
+    async def export_cookies(self, job_id: str) -> tuple[list[dict[str, Any]], str | None]:
         async with self._lock:
             if self._context is None:
                 raise RuntimeError("尚未開啟登入瀏覽器")
+            if self._job_id != job_id:
+                raise RuntimeError("登入瀏覽器已切換至其他工作，請重新開啟此工作的登入視窗")
             cookies = await self._context.cookies()
             user_agent = None
             if self._page is not None and not self._page.is_closed():

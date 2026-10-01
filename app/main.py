@@ -24,11 +24,17 @@ from app.services.browser import browser_session
 from app.services.cookies import (
     IMPORTED_COOKIE_FILE,
     CookieFileError,
+    configured_cookie_domains,
     delete_imported_cookie_file,
+    has_cookies_for_url,
     save_imported_cookie_file,
+    save_imported_cookie_files,
+    snapshot_cookies,
     write_playwright_cookies,
 )
 from app.services.downloader import cancel_download, run_download
+from app.services.sites import can_login, prefetch
+from app.services.yt_dlp_runtime import UpdateBusy, UpdateError, yt_dlp_runtime
 from app.services.storage import CONFIG_DIR, DOWNLOAD_DIR, TEMP_DIR, cancel_queued_job, clear_job_history, clear_queued_jobs, create_job, finish_running_job, get_download_subdir, get_job, init_db, list_jobs, next_queued_job, normalize_download_subdir, prepare_storage, set_download_subdir, update_job
 
 
@@ -77,6 +83,7 @@ async def lifespan(_: FastAPI):
         raise RuntimeError("請設定 NEGADOWNLOADER_PASSWORD 環境變數後再啟動 NegaDownloader。")
     prepare_storage()
     init_db()
+    await yt_dlp_runtime.initialize()
     worker = asyncio.create_task(_download_worker(), name="download-worker")
     try:
         yield
@@ -87,6 +94,7 @@ async def lifespan(_: FastAPI):
         except asyncio.CancelledError:
             pass
         await browser_session.close()
+        await yt_dlp_runtime.close()
 
 
 app = FastAPI(title="NegaDownloader", version="0.2.0", lifespan=lifespan)
@@ -129,6 +137,10 @@ class ClearJobsRequest(BaseModel):
     scope: Literal["queue", "history"]
 
 
+class UpdateYtDlpRequest(BaseModel):
+    channel: Literal["stable", "nightly"] = "stable"
+
+
 def _is_authenticated(request: Request) -> bool:
     return bool(request.session.get("authenticated"))
 
@@ -167,14 +179,6 @@ def _safe_display_url(url: str) -> str:
         return "網址"
 
 
-def _is_instagram_url(url: str) -> bool:
-    try:
-        host = (urlsplit(url).hostname or "").lower().rstrip(".")
-        return host == "instagram.com" or host.endswith(".instagram.com")
-    except Exception:
-        return False
-
-
 async def _validate_public_http_url(value: str) -> str:
     url = value.strip()
     try:
@@ -210,9 +214,14 @@ def _serialize_job(job: dict) -> dict:
         "filename": filename,
         "error": job.get("error"),
         "created_at": job["created_at"],
-        "can_login": _is_instagram_url(job["url"]),
-        "cookies_configured": IMPORTED_COOKIE_FILE.is_file(),
+        "can_login": can_login(job["url"], job.get("error") or ""),
+        "cookies_configured": has_cookies_for_url(job["url"]),
     }
+
+
+def _serialize_jobs(jobs: list[dict]) -> list[dict]:
+    prefetch([job["url"] for job in jobs])
+    return [_serialize_job(job) for job in jobs]
 
 
 @app.get("/healthz")
@@ -282,8 +291,9 @@ async def home(request: Request):
         "index.html",
         {
             "csrf": _new_csrf(request),
-            "jobs": [_serialize_job(job) for job in list_jobs()],
+            "jobs": await asyncio.to_thread(_serialize_jobs, list_jobs()),
             "has_imported_cookies": IMPORTED_COOKIE_FILE.is_file(),
+            "cookie_domains": configured_cookie_domains(),
             "download_subdir": get_download_subdir(),
             "download_root": str(DOWNLOAD_DIR),
         },
@@ -293,9 +303,39 @@ async def home(request: Request):
 @app.get("/api/jobs")
 async def api_jobs(_: None = Depends(require_session)):
     return {
-        "jobs": [_serialize_job(job) for job in list_jobs()],
+        "jobs": await asyncio.to_thread(_serialize_jobs, list_jobs()),
         "cookies_configured": IMPORTED_COOKIE_FILE.is_file(),
+        "cookie_domains": configured_cookie_domains(),
     }
+
+
+@app.get("/api/settings/yt-dlp")
+async def yt_dlp_status(_: None = Depends(require_session)):
+    return await asyncio.to_thread(yt_dlp_runtime.status)
+
+
+@app.post("/api/settings/yt-dlp/update", status_code=202)
+async def update_yt_dlp(request: Request, body: UpdateYtDlpRequest, _: None = Depends(require_session)):
+    _check_csrf(request, request.headers.get("x-csrf-token"))
+    try:
+        return await yt_dlp_runtime.start(body.channel)
+    except UpdateBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (UpdateError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="無法啟動更新，請檢查設定目錄權限與可用空間。") from exc
+
+
+@app.post("/api/settings/yt-dlp/rollback")
+async def rollback_yt_dlp(request: Request, _: None = Depends(require_session)):
+    _check_csrf(request, request.headers.get("x-csrf-token"))
+    try:
+        return await yt_dlp_runtime.rollback()
+    except UpdateBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UpdateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="無法保存版本設定，請檢查設定目錄權限與可用空間。") from exc
 
 
 @app.get("/api/settings/download-path")
@@ -346,24 +386,34 @@ async def create_download_job(request: Request, body: CreateJobRequest, _: None 
     _check_csrf(request, request.headers.get("x-csrf-token"))
     url = await _validate_public_http_url(body.url)
     job = create_job(url)
-    return JSONResponse(_serialize_job(job), status_code=201)
+    return JSONResponse(await asyncio.to_thread(_serialize_job, job), status_code=201)
 
 
 @app.post("/api/cookies")
 async def upload_cookies(
     request: Request,
-    file: UploadFile = File(...),
+    file: list[UploadFile] = File(...),
     _: None = Depends(require_session),
 ):
     _check_csrf(request, request.headers.get("x-csrf-token"))
-    data = await file.read(5 * 1024 * 1024 + 1)
     try:
-        save_imported_cookie_file(data)
+        if len(file) > 20:
+            raise CookieFileError("一次最多匯入 20 個 cookies 檔案")
+        data = []
+        total_bytes = 0
+        for upload in file:
+            content = await upload.read(5 * 1024 * 1024 + 1)
+            total_bytes += len(content)
+            if total_bytes > 5 * 1024 * 1024:
+                raise CookieFileError("一次匯入的 cookies 合計不可超過 5 MiB")
+            data.append(content)
+        save_imported_cookie_files(data)
     except CookieFileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        await file.close()
-    return {"configured": True}
+        for upload in file:
+            await upload.close()
+    return {"configured": True, "cookie_domains": configured_cookie_domains()}
 
 
 @app.delete("/api/cookies")
@@ -379,12 +429,13 @@ async def start_auth_session(job_id: str, request: Request, _: None = Depends(re
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="找不到下載工作。")
-    if not _is_instagram_url(job["url"]):
-        raise HTTPException(status_code=400, detail="互動式瀏覽器目前只支援 Instagram；其他網站請匯入 cookies.txt。")
+    if not await asyncio.to_thread(can_login, job["url"], job.get("error") or ""):
+        raise HTTPException(status_code=400, detail="目前的 yt-dlp 無法辨識此網址的支援網站。")
     if job["status"] not in ("NEEDS_AUTH", "FAILED"):
         raise HTTPException(status_code=409, detail="請等目前的下載工作結束後再開啟登入。")
+    url = await _validate_public_http_url(job["url"])
     try:
-        await browser_session.open(job_id, job["url"])
+        await browser_session.open(job_id, url)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"無法啟動登入瀏覽器：{type(exc).__name__}") from exc
     request.session.setdefault("sid", secrets.token_urlsafe(24))
@@ -398,15 +449,18 @@ async def retry_with_browser_auth(job_id: str, request: Request, _: None = Depen
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="找不到下載工作。")
-    if not _is_instagram_url(job["url"]):
-        raise HTTPException(status_code=400, detail="互動式登入目前只支援 Instagram。")
+    if not await asyncio.to_thread(can_login, job["url"], job.get("error") or ""):
+        raise HTTPException(status_code=400, detail="目前的 yt-dlp 無法辨識此網址的支援網站。")
     if job["status"] not in ("NEEDS_AUTH", "FAILED"):
         raise HTTPException(status_code=409, detail="此工作目前無法使用登入狀態重試。")
     cookie_path = TEMP_DIR / f"{job_id}.txt"
     try:
-        cookies, user_agent = await browser_session.export_cookies()
+        cookies, user_agent = await browser_session.export_cookies(job_id)
         write_playwright_cookies(cookies, cookie_path)
+        save_imported_cookie_file(cookie_path.read_bytes())
+        snapshot_cookies(cookie_path)
     except (RuntimeError, CookieFileError) as exc:
+        cookie_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     update_job(job_id, status="QUEUED", progress=0, error=None, cookie_path=str(cookie_path), user_agent=user_agent)
     return {"status": "QUEUED"}
@@ -420,8 +474,8 @@ async def retry_with_imported_cookies(job_id: str, request: Request, _: None = D
         raise HTTPException(status_code=404, detail="找不到下載工作。")
     if job["status"] not in ("FAILED", "NEEDS_AUTH"):
         raise HTTPException(status_code=409, detail="此工作目前無法使用 cookies 重試。")
-    if not IMPORTED_COOKIE_FILE.is_file():
-        raise HTTPException(status_code=400, detail="請先匯入 cookies.txt。")
+    if not has_cookies_for_url(job["url"]):
+        raise HTTPException(status_code=400, detail="請先匯入此網站的 cookies.txt。")
     update_job(job_id, status="QUEUED", progress=0, error=None, cookie_path=None, user_agent=None)
     return {"status": "QUEUED"}
 

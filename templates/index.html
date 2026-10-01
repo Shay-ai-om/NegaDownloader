@@ -57,6 +57,7 @@
         <div class="job-actions">
           {% if job.status == 'SUCCEEDED' %}<a class="button primary small-button" href="/api/jobs/{{ job.id }}/file">下載檔案 <span aria-hidden="true">↓</span></a>{% endif %}
           {% if job.can_login and job.status in ['NEEDS_AUTH', 'FAILED'] %}<button class="secondary small-button login-action" data-job-id="{{ job.id }}">登入並重試</button>{% endif %}
+          {% if job.cookies_configured and job.status in ['NEEDS_AUTH', 'FAILED'] %}<button class="quiet small-button cookie-retry-action" data-job-id="{{ job.id }}">使用 cookies 重試</button>{% endif %}
           {% if job.status in ['QUEUED', 'RUNNING'] %}<button class="quiet small-button cancel-action" data-job-id="{{ job.id }}">取消</button>{% endif %}
         </div>
       </article>
@@ -81,13 +82,30 @@
       <article class="panel settings-panel cookie-panel">
         <div class="panel-kicker"><span class="step-index">03</span><span>AUTH FALLBACK</span><span id="cookie-status" class="status-pill {{ 'configured' if has_imported_cookies else '' }}">{{ '已設定' if has_imported_cookies else '尚未設定' }}</span></div>
         <h2>Cookies 備援</h2>
-        <p class="settings-copy">匯入 Mozilla/Netscape 格式的 cookies.txt。Cookies 會存入設定目錄並視同登入憑證，請保護好設定目錄。</p>
+        <p class="settings-copy">可選取多個 Mozilla/Netscape 格式的 cookies.txt，支援各網站。匯入會合併現有 cookies；相同網域、路徑與名稱才會覆寫。請保護好存放登入憑證的設定目錄。</p>
         <form id="cookie-form" class="cookie-form">
-          <label class="file-picker" for="cookie-file"><span>選擇 cookies.txt</span><input id="cookie-file" type="file" accept=".txt,text/plain" required></label>
-          <button class="secondary" type="submit">匯入 / 替換</button>
-          <button id="remove-cookies" class="quiet" type="button" {% if not has_imported_cookies %}disabled{% endif %}>移除</button>
+          <label class="file-picker" for="cookie-file"><span>選擇 cookies 檔案</span><input id="cookie-file" type="file" accept=".txt,text/plain" multiple required></label>
+          <button class="secondary" type="submit">合併匯入</button>
+          <button id="remove-cookies" class="quiet" type="button" {% if not has_imported_cookies %}disabled{% endif %}>移除全部</button>
         </form>
         <div id="cookie-message" class="form-message" role="status"></div>
+        <p id="cookie-domains" class="settings-copy">{% if cookie_domains %}已保存網域：{{ cookie_domains|join('、') }}{% else %}尚未保存有效 cookies。{% endif %}</p>
+      </article>
+
+      <article class="panel settings-panel updater-panel">
+        <div class="panel-kicker"><span class="step-index">04</span><span>YT-DLP</span><span id="yt-dlp-source" class="status-pill">載入中</span></div>
+        <h2>下載引擎更新</h2>
+        <p class="settings-copy">版本保存在設定目錄，重建容器後仍可使用。更新只影響新工作，正在下載的工作會繼續使用原版本。</p>
+        <p class="engine-version">目前版本 <strong id="yt-dlp-version">載入中…</strong></p>
+        <form id="yt-dlp-form" class="updater-form">
+          <label for="yt-dlp-channel">更新通道</label>
+          <div class="updater-actions">
+            <select id="yt-dlp-channel" name="channel"><option value="stable">Stable · 正式版</option><option value="nightly">Nightly · 最新修正</option></select>
+            <button id="update-yt-dlp" class="primary" type="submit" disabled>更新 yt-dlp</button>
+            <button id="rollback-yt-dlp" class="secondary" type="button" disabled>回復上一版本</button>
+          </div>
+        </form>
+        <p id="yt-dlp-message" class="form-message" role="status" aria-live="polite"></p>
       </article>
     </section>
 
@@ -97,9 +115,9 @@
   <div id="browser-modal" class="modal" hidden>
     <div class="modal-backdrop" data-close-modal></div>
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="browser-title">
-      <header class="modal-header"><div><p class="eyebrow"><span class="eyebrow-line"></span> INSTAGRAM SESSION</p><h2 id="browser-title">在遠端瀏覽器登入</h2></div><button class="icon-button" type="button" data-close-modal aria-label="關閉">×</button></header>
-      <p class="muted modal-copy">此瀏覽器執行於 NegaDownloader 容器中。請在 Instagram 頁面完成登入與驗證，再按「使用登入狀態重試」。</p>
-      <iframe id="browser-frame" title="遠端 Instagram 瀏覽器" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+      <header class="modal-header"><div><p class="eyebrow"><span class="eyebrow-line"></span> WEBSITE SESSION</p><h2 id="browser-title">在遠端瀏覽器登入</h2></div><button class="icon-button" type="button" data-close-modal aria-label="關閉">×</button></header>
+      <p class="muted modal-copy">此瀏覽器執行於 NegaDownloader 容器中。請在目標網站完成登入與驗證，再按「使用登入狀態重試」。登入 cookies 會保存供後續下載使用。</p>
+      <iframe id="browser-frame" title="遠端網站登入瀏覽器" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       <div id="browser-message" class="form-message" role="status"></div>
       <footer class="modal-actions"><button id="retry-with-auth" class="primary" type="button">使用登入狀態重試 <b aria-hidden="true">↗</b></button><button class="secondary" type="button" data-close-modal>稍後處理</button></footer>
     </section>

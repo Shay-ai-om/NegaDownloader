@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-from app.services.cookies import IMPORTED_COOKIE_FILE
+from app.services.cookies import snapshot_cookies
 from app.services.storage import DOWNLOAD_DIR, TEMP_DIR, get_job
+from app.services.yt_dlp_runtime import yt_dlp_runtime
 
 
 ProgressCallback = Callable[[float], Awaitable[None]]
@@ -115,10 +115,8 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
         return {"status": "FAILED", "error": "下載路徑無效。"}
     folder.mkdir(parents=True, exist_ok=True)
     output_template = str(folder / "%(title).180B-%(id)s.%(ext)s")
-    args = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
+    runtime = await asyncio.to_thread(yt_dlp_runtime.active)
+    args = runtime.command() + [
         "--ignore-config",
         "--newline",
         "--progress",
@@ -131,14 +129,17 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
         "after_move:filepath",
     ]
     cookie_path = job.get("cookie_path")
+    snapshot_path = TEMP_DIR / f"{job_id}.txt"
     if cookie_path:
         candidate = Path(cookie_path).resolve()
         if candidate.is_file():
             args.extend(("--cookies", str(candidate)))
-        elif IMPORTED_COOKIE_FILE.is_file():
-            args.extend(("--cookies", str(IMPORTED_COOKIE_FILE)))
-    elif IMPORTED_COOKIE_FILE.is_file():
-        args.extend(("--cookies", str(IMPORTED_COOKIE_FILE)))
+        elif snapshot_cookies(snapshot_path):
+            cookie_path = str(snapshot_path)
+            args.extend(("--cookies", cookie_path))
+    elif snapshot_cookies(snapshot_path):
+        cookie_path = str(snapshot_path)
+        args.extend(("--cookies", cookie_path))
     if job.get("user_agent"):
         args.extend(("--user-agent", job["user_agent"]))
     args.append(job["url"])
@@ -229,4 +230,4 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
     finally:
         _active.pop(job_id, None)
         _cancelled.discard(job_id)
-        _discard_job_cookie(job.get("cookie_path"))
+        _discard_job_cookie(cookie_path)
