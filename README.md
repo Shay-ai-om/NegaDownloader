@@ -31,7 +31,11 @@ In Unraid's Docker template, map the appdata directory read/write to `/config` a
 
 GitHub Actions builds `ghcr.io/shay-ai-om/negadownloader:latest` whenever changes reach `main`. Pushing a `v*` tag also publishes that version tag, for example `ghcr.io/shay-ai-om/negadownloader:v1.2.3`. Images currently target `linux/amd64`.
 
+Docker Hub publishing is also supported after configuring the repository. Create a public Docker Hub repository named `negadownloader`, add the Docker Hub namespace as the GitHub Actions variable `DOCKERHUB_USERNAME`, and add a Docker Hub access token with write permission as the Actions secret `DOCKERHUB_TOKEN`. The workflow then publishes an image such as `namespace/negadownloader:latest` and matching version/SHA tags. In Unraid's Apps settings, enable additional search results from Docker Hub; search for the full image name and open the Docker Hub results. Unraid can derive a starter template from the image metadata, but set `NEGADOWNLOADER_PASSWORD` and verify the `/config` and `/downloads` host paths before installing.
+
 To install from the supplied Unraid template on current Unraid versions, download [the template XML](https://raw.githubusercontent.com/Shay-ai-om/NegaDownloader/main/templates/negadownloader.xml) to the flash drive at `/boot/config/plugins/dockerMan/templates-user/negadownloader.xml`. Then open **Docker → Add Container** and choose the NegaDownloader user template. This makes it available in the Docker template selector; it does not add the app to the **Apps** search catalog. Apps search requires a separate Community Applications submission and review. For an existing install, edit the container's repository to `ghcr.io/shay-ai-om/negadownloader:latest`, keep its `/config` and `/downloads` host paths, and apply the change.
+
+The GHCR package for this repository is currently public, so Unraid can pull it without registry credentials. GitHub may create packages in other namespaces as private; check the package visibility before using anonymous pulls. A public package cannot be changed back to private. Subsequent pushes to `main` update `latest` automatically; a `v*` Git tag publishes a versioned image.
 
 ### Choose or change the download directory
 

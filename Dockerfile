@@ -6,6 +6,7 @@ LABEL org.opencontainers.image.source="https://github.com/Shay-ai-om/NegaDownloa
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    NEGADOWNLOADER_PASSWORD="" \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     DISPLAY=:99
 

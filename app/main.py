@@ -41,7 +41,7 @@ from app.services.storage import CONFIG_DIR, DOWNLOAD_DIR, TEMP_DIR, cancel_queu
 APP_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
 MAX_URL_LENGTH = 4096
-PASSWORD = os.environ.get("NEGADOWNLOADER_PASSWORD", os.environ.get("YOULOGGER_PASSWORD", ""))
+PASSWORD = os.environ.get("NEGADOWNLOADER_PASSWORD") or os.environ.get("YOULOGGER_PASSWORD", "")
 COOKIE_SECURE = os.environ.get("NEGADOWNLOADER_COOKIE_SECURE", os.environ.get("YOULOGGER_COOKIE_SECURE", "false")).lower() == "true"
 
 
