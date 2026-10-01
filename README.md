@@ -27,6 +27,14 @@ PGID=100
 
 In Unraid's Docker template, map the appdata directory read/write to `/config` and your chosen media share read/write to `/downloads`. The interactive browser runs inside the container; publish only host port `20880` to container port `8080` (`20880:8080`). Do not publish the internal VNC/noVNC ports. Use a reverse proxy with TLS and WebSocket support for remote access.
 
+## Prebuilt image and Unraid template
+
+GitHub Actions builds `ghcr.io/shay-ai-om/negadownloader:latest` whenever changes reach `main`. Pushing a `v*` tag also publishes that version tag, for example `ghcr.io/shay-ai-om/negadownloader:v1.2.3`. Images currently target `linux/amd64`.
+
+To add the supplied Unraid template, add `https://github.com/Shay-ai-om/NegaDownloader` to **Settings → Docker → Template repositories**, apply the change, then choose **NegaDownloader** from the container template list. For an existing install, keep its `/config` and `/downloads` host paths and set the repository to `ghcr.io/shay-ai-om/negadownloader:latest` before applying the update.
+
+The first published GHCR package is private by default. To let Unraid pull it without registry credentials, open the package's **Package settings → Change visibility → Public** once the first Actions run creates it. GitHub does not allow changing a public package back to private. Subsequent pushes to `main` update `latest` automatically; a `v*` Git tag publishes a versioned image.
+
 ### Choose or change the download directory
 
 At deployment, `NEGADOWNLOADER_DOWNLOADS` (Compose) or the Unraid host-path mapping for `/downloads` selects the host directory mounted into the container. For example, map `/mnt/user/Media/NegaDownloader` to `/downloads`.

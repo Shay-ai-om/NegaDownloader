@@ -1,5 +1,8 @@
 FROM python:3.12-slim-bookworm
 
+LABEL org.opencontainers.image.source="https://github.com/Shay-ai-om/NegaDownloader" \
+      org.opencontainers.image.description="Self-hosted web interface for yt-dlp"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

@@ -1,0 +1,22 @@
+<Container version="2">
+  <Name>NegaDownloader</Name>
+  <Repository>ghcr.io/shay-ai-om/negadownloader:latest</Repository>
+  <Registry>https://ghcr.io/shay-ai-om/negadownloader</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <WebUI>http://[IP]:[PORT:8080]</WebUI>
+  <Overview>Self-hosted yt-dlp WebUI with a persistent download queue, multi-site cookies, and an embedded sign-in browser.</Overview>
+  <Support>https://github.com/Shay-ai-om/NegaDownloader/issues</Support>
+  <Project>https://github.com/Shay-ai-om/NegaDownloader</Project>
+  <TemplateURL>https://raw.githubusercontent.com/Shay-ai-om/NegaDownloader/main/templates/negadownloader.xml</TemplateURL>
+  <ReadMe>https://raw.githubusercontent.com/Shay-ai-om/NegaDownloader/main/README.md</ReadMe>
+  <Config Name="WebUI port" Target="8080" Default="20880" Mode="tcp" Description="HTTP port for the WebUI." Type="Port" Display="always" Required="true" Mask="false">20880</Config>
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/negadownloader/config" Mode="rw" Description="Persistent jobs, settings, cookies, browser profile, and yt-dlp updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/negadownloader/config</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/Media/NegaDownloader" Mode="rw" Description="Downloaded media files." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Media/NegaDownloader</Config>
+  <Config Name="WebUI password" Target="NEGADOWNLOADER_PASSWORD" Default="" Description="Required password for the WebUI." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="PUID" Target="PUID" Default="99" Description="User ID for downloaded files; commonly 99 on Unraid." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="Group ID for downloaded files; commonly 100 on Unraid." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Secure cookies" Target="NEGADOWNLOADER_COOKIE_SECURE" Default="false" Description="Set true when accessed only through HTTPS." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Chromium sandbox" Target="NEGADOWNLOADER_CHROMIUM_SANDBOX" Default="true" Description="Disable only if Chromium cannot start on this host." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+</Container>
