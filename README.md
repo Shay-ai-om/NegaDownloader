@@ -33,8 +33,6 @@ GitHub Actions builds `ghcr.io/shay-ai-om/negadownloader:latest` whenever change
 
 To install from the supplied Unraid template on current Unraid versions, download [the template XML](https://raw.githubusercontent.com/Shay-ai-om/NegaDownloader/main/templates/negadownloader.xml) to the flash drive at `/boot/config/plugins/dockerMan/templates-user/negadownloader.xml`. Then open **Docker → Add Container** and choose the NegaDownloader user template. This makes it available in the Docker template selector; it does not add the app to the **Apps** search catalog. Apps search requires a separate Community Applications submission and review. For an existing install, edit the container's repository to `ghcr.io/shay-ai-om/negadownloader:latest`, keep its `/config` and `/downloads` host paths, and apply the change.
 
-The first published GHCR package is private by default. To let Unraid pull it without registry credentials, open the package's **Package settings → Change visibility → Public** once the first Actions run creates it. GitHub does not allow changing a public package back to private. Subsequent pushes to `main` update `latest` automatically; a `v*` Git tag publishes a versioned image.
-
 ### Choose or change the download directory
 
 At deployment, `NEGADOWNLOADER_DOWNLOADS` (Compose) or the Unraid host-path mapping for `/downloads` selects the host directory mounted into the container. For example, map `/mnt/user/Media/NegaDownloader` to `/downloads`.
