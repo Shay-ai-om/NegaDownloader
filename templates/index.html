@@ -73,7 +73,7 @@
         <p class="settings-copy">部署時掛載主機資料夾；這裡可切換掛載目錄底下的子資料夾。只影響之後新增的工作。</p>
         <form id="download-path-form" class="path-form">
           <label for="download-path">子資料夾</label>
-          <div class="path-input-row"><span class="path-prefix">/downloads/</span><input id="download-path" name="path" type="text" value="{{ download_subdir }}" placeholder="留空代表根目錄" maxlength="1024"><button class="secondary" type="submit">儲存位置</button></div>
+          <div class="path-input-row"><span class="path-prefix">/app/download/</span><input id="download-path" name="path" type="text" value="{{ download_subdir }}" placeholder="留空代表根目錄" maxlength="1024"><button class="secondary" type="submit">儲存位置</button></div>
           <p class="path-result">容器內路徑 <code>{{ download_root }}{% if download_subdir %}/{{ download_subdir }}{% endif %}</code></p>
           <p id="download-path-message" class="form-message" role="status"></p>
         </form>

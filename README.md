@@ -25,21 +25,21 @@ PUID=99
 PGID=100
 ```
 
-In Unraid's Docker template, map the appdata directory read/write to `/config` and your chosen media share read/write to `/downloads`. The interactive browser runs inside the container; publish only host port `20880` to container port `8080` (`20880:8080`). Do not publish the internal VNC/noVNC ports. Use a reverse proxy with TLS and WebSocket support for remote access.
+In Unraid's Docker template, map the appdata directory read/write to `/app/data` and your chosen media share read/write to `/app/download`. The interactive browser runs inside the container; publish only host port `20880` to container port `8080` (`20880:8080`). Do not publish the internal VNC/noVNC ports. Use a reverse proxy with TLS and WebSocket support for remote access.
 
 ## Prebuilt image and Unraid template
 
 GitHub Actions builds `ghcr.io/shay-ai-om/negadownloader:latest` whenever changes reach `main`. Pushing a `v*` tag also publishes that version tag, for example `ghcr.io/shay-ai-om/negadownloader:v1.2.3`. Images currently target `linux/amd64`.
 
-Docker Hub publishing is also supported after configuring the repository. Create a public Docker Hub repository named `negadownloader`, add the Docker Hub namespace as the GitHub Actions variable `DOCKERHUB_USERNAME`, and add a Docker Hub access token with write permission as the Actions secret `DOCKERHUB_TOKEN`. The workflow then publishes an image such as `namespace/negadownloader:latest` and matching version/SHA tags. In Unraid's Apps settings, enable additional search results from Docker Hub; search for the full image name and open the Docker Hub results. Unraid can derive a starter template from the image metadata, but set `NEGADOWNLOADER_PASSWORD` and verify the `/config` and `/downloads` host paths before installing.
+Docker Hub publishing is also supported after configuring the repository. Create a public Docker Hub repository named `negadownloader`, add the Docker Hub namespace as the GitHub Actions variable `DOCKERHUB_USERNAME`, and add a Docker Hub access token with write permission as the Actions secret `DOCKERHUB_TOKEN`. The workflow then publishes an image such as `namespace/negadownloader:latest` and matching version/SHA tags. In Unraid's Apps settings, enable additional search results from Docker Hub; search for the full image name and open the Docker Hub results. Unraid can derive a starter template from the image metadata, but set `NEGADOWNLOADER_PASSWORD` and verify the `/app/data` and `/app/download` container paths and host paths before installing.
 
-To install from the supplied Unraid template on current Unraid versions, download [the template XML](https://raw.githubusercontent.com/Shay-ai-om/NegaDownloader/main/templates/negadownloader.xml) to the flash drive at `/boot/config/plugins/dockerMan/templates-user/negadownloader.xml`. Then open **Docker → Add Container** and choose the NegaDownloader user template. This makes it available in the Docker template selector; it does not add the app to the **Apps** search catalog. Apps search requires a separate Community Applications submission and review. For an existing install, edit the container's repository to `ghcr.io/shay-ai-om/negadownloader:latest`, keep its `/config` and `/downloads` host paths, and apply the change.
+To install from the supplied Unraid template on current Unraid versions, download [the template XML](https://raw.githubusercontent.com/Shay-ai-om/NegaDownloader/main/templates/negadownloader.xml) to the flash drive at `/boot/config/plugins/dockerMan/templates-user/negadownloader.xml`. Then open **Docker → Add Container** and choose the NegaDownloader user template. This makes it available in the Docker template selector; it does not add the app to the **Apps** search catalog. Apps search requires a separate Community Applications submission and review. For an existing install, edit the container's repository to `ghcr.io/shay-ai-om/negadownloader:latest`, keep the same host directories, change their container targets to `/app/data` and `/app/download`, then apply the change. Back up existing app data before recreating the container, especially if the earlier container ran without correctly mounted paths.
 
 The GHCR package for this repository is currently public, so Unraid can pull it without registry credentials. GitHub may create packages in other namespaces as private; check the package visibility before using anonymous pulls. A public package cannot be changed back to private. Subsequent pushes to `main` update `latest` automatically; a `v*` Git tag publishes a versioned image.
 
 ### Choose or change the download directory
 
-At deployment, `NEGADOWNLOADER_DOWNLOADS` (Compose) or the Unraid host-path mapping for `/downloads` selects the host directory mounted into the container. For example, map `/mnt/user/Media/NegaDownloader` to `/downloads`.
+At deployment, `NEGADOWNLOADER_DOWNLOADS` (Compose) or the Unraid host-path mapping for `/app/download` selects the host directory mounted into the container. For example, map `/mnt/user/Media/NegaDownloader` to `/app/download`.
 
 After deployment, the WebUI's **下載位置** setting selects a relative subfolder inside that mounted directory. Enter a value such as `Instagram/Reels`; leave it blank to use the mount root. The WebUI cannot switch to a host directory that Docker has not mounted. To use a different host share, change the host-path mapping and recreate the container. New jobs capture the current WebUI setting when they are added; queued and completed jobs keep their original destination.
 
@@ -53,13 +53,13 @@ After deployment, the WebUI's **下載位置** setting selects a relative subfol
 - **清空佇列** removes jobs that have not started. Active downloads are preserved.
 - **清除紀錄** removes completed, failed, needs-login, and cancelled job rows. Downloaded media files remain on disk.
 
-The embedded browser runs inside NegaDownloader. The app does not receive the password entered on Instagram. Cookies and the browser profile are login credentials, so keep `/config` private and include it in protected backups. The app does not bypass CAPTCHA or access controls; a site may still expire or reject a session.
+The embedded browser runs inside NegaDownloader. The app does not receive the password entered on Instagram. Cookies and the browser profile are login credentials, so keep `/app/data` private and include it in protected backups. The app does not bypass CAPTCHA or access controls; a site may still expire or reject a session.
 
 ## Configuration
 
 - `NEGADOWNLOADER_PASSWORD`: required WebUI password.
-- `NEGADOWNLOADER_CONFIG`: host directory mounted at `/config`; stores the database and authentication state.
-- `NEGADOWNLOADER_DOWNLOADS`: host directory mounted at `/downloads`.
+- `NEGADOWNLOADER_CONFIG`: host directory mounted at `/app/data`; stores the database and authentication state.
+- `NEGADOWNLOADER_DOWNLOADS`: host directory mounted at `/app/download`.
 - `NEGADOWNLOADER_PORT`: host port for WebUI port `8080` (default `20880`).
 - `NEGADOWNLOADER_COOKIE_SECURE`: set to `true` when the app is accessed only over HTTPS.
 - `NEGADOWNLOADER_CHROMIUM_SANDBOX`: keep enabled unless the host prevents Chromium from starting.
@@ -68,21 +68,21 @@ The embedded browser runs inside NegaDownloader. The app does not receive the pa
 
 ## Persistent files
 
-- `/config/youlogger.sqlite3`: jobs, settings, and queue state.
-- `/config/session.secret`: WebUI session signing key.
-- `/config/auth/imported-cookies.txt`: merged multi-site cookie jar, including imports and browser exports.
-- `/config/auth/instagram-browser/`: dedicated multi-site Chromium profile; the legacy directory name preserves existing sessions.
-- `/config/auth/temporary/`: isolated per-job cookie snapshots, deleted after download completion, failure, or cancellation.
-- `/config/runtime/yt-dlp/`: saved update environments, active/previous selections, and update status.
-- `/downloads/<subfolder>/<job-id>/`: downloaded media.
+- `/app/data/youlogger.sqlite3`: jobs, settings, and queue state.
+- `/app/data/session.secret`: WebUI session signing key.
+- `/app/data/auth/imported-cookies.txt`: merged multi-site cookie jar, including imports and browser exports.
+- `/app/data/auth/instagram-browser/`: dedicated multi-site Chromium profile; the legacy directory name preserves existing sessions.
+- `/app/data/auth/temporary/`: isolated per-job cookie snapshots, deleted after download completion, failure, or cancellation.
+- `/app/data/runtime/yt-dlp/`: saved update environments, active/previous selections, and update status.
+- `/app/download/<subfolder>/<job-id>/`: downloaded media.
 
-The `/config` and `/downloads` bind mounts survive image rebuilds. When updating, run `docker compose up -d --build` from the project directory.
+The `/app/data` and `/app/download` bind mounts survive image rebuilds. When updating, run `docker compose up -d --build` from the project directory.
 
 ## WebUI yt-dlp updates
 
-Use **下載引擎更新** to view the current version, choose Stable or Nightly, and click **更新 yt-dlp**. The app installs and verifies the official PyPI package in a persistent environment under `/config`; new downloads switch only after success. Running downloads continue using their original version. **回復上一版本** restores the previous environment, including the built-in image version.
+Use **下載引擎更新** to view the current version, choose Stable or Nightly, and click **更新 yt-dlp**. The app installs and verifies the official PyPI package in a persistent environment under `/app/data`; new downloads switch only after success. Running downloads continue using their original version. **回復上一版本** restores the previous environment, including the built-in image version.
 
-Saved versions survive container recreation with the same `/config` mount. Incompatible Python environments fall back to the image version and show a warning. See [update implementation and usage](docs/yt-dlp-webui-update.md) for details.
+Saved versions survive container recreation with the same `/app/data` mount. Incompatible Python environments fall back to the image version and show a warning. See [update implementation and usage](docs/yt-dlp-webui-update.md) for details.
 
 ## Verification
 

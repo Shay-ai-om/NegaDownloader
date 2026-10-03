@@ -9,8 +9,8 @@ if [ "$(id -u)" -eq 0 ]; then
   exec gosu negadownloader /app/entrypoint.sh
 fi
 
-mkdir -p "${NEGADOWNLOADER_CONFIG_DIR:-${YOULOGGER_CONFIG_DIR:-/config}}" "${NEGADOWNLOADER_DOWNLOAD_DIR:-${YOULOGGER_DOWNLOAD_DIR:-/downloads}}"
-export HOME="${NEGADOWNLOADER_CONFIG_DIR:-${YOULOGGER_CONFIG_DIR:-/config}}/home"
+mkdir -p "${NEGADOWNLOADER_CONFIG_DIR:-${YOULOGGER_CONFIG_DIR:-/app/data}}" "${NEGADOWNLOADER_DOWNLOAD_DIR:-${YOULOGGER_DOWNLOAD_DIR:-/app/download}}"
+export HOME="${NEGADOWNLOADER_CONFIG_DIR:-${YOULOGGER_CONFIG_DIR:-/app/data}}/home"
 mkdir -p "$HOME"
 chmod 700 "$HOME"
 Xvfb "${DISPLAY:-:99}" -screen 0 1360x900x24 -nolisten tcp -ac &

@@ -25,10 +25,10 @@ COPY templates ./templates
 COPY static ./static
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod 755 /app/entrypoint.sh \
-    && mkdir -p /config /downloads \
+    && mkdir -p /app/data /app/download \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin negadownloader \
-    && chown -R negadownloader:negadownloader /app /config /downloads /ms-playwright
+    && chown -R negadownloader:negadownloader /app /ms-playwright
 
 EXPOSE 8080
-VOLUME ["/config", "/downloads"]
+VOLUME ["/app/data", "/app/download"]
 ENTRYPOINT ["/app/entrypoint.sh"]

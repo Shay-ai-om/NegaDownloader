@@ -10,8 +10,8 @@ from typing import Any
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
-CONFIG_DIR = Path(os.environ.get("NEGADOWNLOADER_CONFIG_DIR", os.environ.get("YOULOGGER_CONFIG_DIR", str(PROJECT_DIR / "data" / "config")))).resolve()
-DOWNLOAD_DIR = Path(os.environ.get("NEGADOWNLOADER_DOWNLOAD_DIR", os.environ.get("YOULOGGER_DOWNLOAD_DIR", str(PROJECT_DIR / "downloads")))).resolve()
+CONFIG_DIR = Path(os.environ.get("NEGADOWNLOADER_CONFIG_DIR", os.environ.get("YOULOGGER_CONFIG_DIR", str(PROJECT_DIR / "data")))).resolve()
+DOWNLOAD_DIR = Path(os.environ.get("NEGADOWNLOADER_DOWNLOAD_DIR", os.environ.get("YOULOGGER_DOWNLOAD_DIR", str(PROJECT_DIR / "download")))).resolve()
 AUTH_DIR = CONFIG_DIR / "auth"
 TEMP_DIR = AUTH_DIR / "temporary"
 DB_PATH = CONFIG_DIR / "youlogger.sqlite3"
@@ -22,14 +22,14 @@ def normalize_download_subdir(value: str) -> str:
     if not value:
         return ""
     if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
-        raise ValueError("請輸入 /downloads 掛載目錄底下的相對路徑。")
+        raise ValueError("請輸入 /app/download 掛載目錄底下的相對路徑。")
     parts = [part for part in value.split("/") if part not in ("", ".")]
     if not parts or any(part == ".." for part in parts):
-        raise ValueError("下載子目錄不可離開 /downloads 掛載目錄。")
+        raise ValueError("下載子目錄不可離開 /app/download 掛載目錄。")
     normalized = "/".join(parts)
     candidate = (DOWNLOAD_DIR / normalized).resolve()
     if not candidate.is_relative_to(DOWNLOAD_DIR):
-        raise ValueError("下載子目錄不可離開 /downloads 掛載目錄。")
+        raise ValueError("下載子目錄不可離開 /app/download 掛載目錄。")
     return normalized
 
 
