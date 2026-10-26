@@ -66,6 +66,34 @@ The embedded browser runs inside NegaDownloader. The app does not receive the pa
 - `NEGADOWNLOADER_DOWNLOAD_TIMEOUT_SECONDS`: per-job timeout, default `21600` seconds.
 - `PUID` / `PGID`: container identity for host file ownership; Unraid commonly uses `99` / `100`.
 
+## API access for other computers and agents
+
+For a full guide in Traditional Chinese, see [API 使用教學](docs/api-usage.zh-TW.md).
+
+Sign in to the WebUI and create an API token in **API Token**. Give it a name, choose permissions and an expiry, then copy the value immediately; the full token is shown only once. Tokens can be revoked from the same panel. A token with `jobs:create` can use the service's saved website cookies for downloads, so issue tokens only to trusted clients. Tokens cannot read or export cookie values.
+
+Use the same base address as the WebUI, preferably through an HTTPS reverse proxy or a trusted private network/VPN. Send the token only in the `Authorization: Bearer` header. The versioned API does not require a browser session or CSRF token:
+
+```sh
+curl -X POST 'https://your-server.example/api/v1/jobs' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-video-001' \
+  -d '{"url":"https://example.com/video"}'
+
+curl 'https://your-server.example/api/v1/jobs/JOB_ID' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+
+curl -L 'https://your-server.example/api/v1/jobs/JOB_ID/file' \
+  -H 'Authorization: Bearer YOUR_TOKEN' -o video.mp4
+```
+
+Available endpoints are `POST /api/v1/jobs`, `GET /api/v1/jobs?limit=50&offset=0`, `GET /api/v1/jobs/{id}`, `POST /api/v1/jobs/{id}/cancel`, and `GET /api/v1/jobs/{id}/file`. The file endpoint requires `files:read`; other permissions are `jobs:create`, `jobs:read`, and `jobs:cancel`. Each token sees and controls only the jobs it created. The WebUI administrator can still see all jobs. The API returns `401` for invalid, expired, or revoked tokens, `403` for missing permission, `404` for another token's job, `409` for a conflicting idempotency key or invalid job state, and `429` for the per-token limit of 10 new jobs per minute or 20 queued/running jobs. Retry a `429` after the `Retry-After` interval.
+
+Jobs use the current shared cookie jar automatically. If a job reaches `NEEDS_AUTH`, complete sign-in or import fresh cookies in the WebUI, then retry the job there; the API client can keep polling its job ID. The API does not manage the sign-in browser or modify cookies. OpenAPI schemas are available at `/docs`.
+
+The app currently checks submitted URLs for public HTTP/HTTPS destinations, but yt-dlp may resolve hosts again or follow redirects. Give job creation tokens only to trusted agents, and restrict container access to private network targets at the deployment layer if agents are not fully trusted. Keep the configuration directory private because it stores website sessions and API token hashes.
+
 ## Persistent files
 
 - `/app/data/youlogger.sqlite3`: jobs, settings, and queue state.

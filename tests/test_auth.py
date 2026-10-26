@@ -197,6 +197,119 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         rollback.assert_awaited_once()
 
+    def _new_api_token(self, name="agent", scopes=None):
+        response = self.client.post("/api/tokens", headers=self.headers, json={
+            "name": name,
+            "scopes": scopes or ["jobs:create", "jobs:read", "jobs:cancel", "files:read"],
+            "expires_in_days": 30,
+        })
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()["token"], response.json()["details"]["id"]
+
+    def test_api_token_lifecycle_and_job_isolation(self):
+        token_a, id_a = self._new_api_token("agent A")
+        token_b, _ = self._new_api_token("agent B")
+        self.assertNotIn(token_a, str(self.client.get("/api/tokens").json()))
+        client = TestClient(app)
+        try:
+            self.assertEqual(client.get("/api/v1/jobs").status_code, 401)
+            self.assertEqual(client.get("/api/v1/jobs", headers={"Authorization": "Bearer bad"}).status_code, 401)
+            headers_a = {"Authorization": f"Bearer {token_a}", "Idempotency-Key": "same-video-001"}
+            headers_b = {"Authorization": f"Bearer {token_b}"}
+            with patch("app.main._validate_public_http_url", AsyncMock(side_effect=lambda value: value)):
+                created = client.post("/api/v1/jobs", headers=headers_a, json={"url": "https://example.com/video"})
+                replay = client.post("/api/v1/jobs", headers=headers_a, json={"url": "https://example.com/video"})
+                conflict = client.post("/api/v1/jobs", headers=headers_a, json={"url": "https://example.com/other"})
+            self.assertEqual(created.status_code, 201, created.text)
+            job_id = created.json()["id"]
+            self.assertEqual(replay.status_code, 200)
+            self.assertEqual(replay.json()["id"], job_id)
+            self.assertEqual(conflict.status_code, 409)
+            self.assertEqual(client.get(f"/api/v1/jobs/{job_id}", headers=headers_b).status_code, 404)
+            self.assertEqual(client.post(f"/api/v1/jobs/{job_id}/cancel", headers=headers_b).status_code, 404)
+            self.assertEqual(client.get("/api/v1/jobs", headers=headers_b).json()["total"], 0)
+            self.assertEqual(client.get(f"/api/v1/jobs/{job_id}", headers=headers_a).json()["status"], "QUEUED")
+            self.assertEqual(client.post(f"/api/v1/jobs/{job_id}/cancel", headers=headers_a).status_code, 200)
+            self.assertEqual(self.client.delete(f"/api/tokens/{id_a}", headers=self.headers).status_code, 200)
+            self.assertEqual(client.get("/api/v1/jobs", headers=headers_a).status_code, 401)
+        finally:
+            client.close()
+
+    def test_api_file_permission_and_token_management_csrf(self):
+        self.assertEqual(self.client.post("/api/tokens", json={"name":"x", "scopes":["jobs:create"]}).status_code, 403)
+        token, _ = self._new_api_token("reader", ["jobs:read"])
+        client = TestClient(app)
+        try:
+            headers = {"Authorization": f"Bearer {token}"}
+            self.assertEqual(client.post("/api/v1/jobs", headers=headers, json={"url":"https://example.com/v"}).status_code, 403)
+            self.assertEqual(client.get("/api/v1/jobs", headers=headers).status_code, 200)
+            self.assertEqual(client.get("/api/v1/jobs/not-found/file", headers=headers).status_code, 403)
+        finally:
+            client.close()
+
+    def test_api_file_requires_owner_and_expired_token_is_rejected(self):
+        token_a, id_a = self._new_api_token("file owner")
+        token_b, _ = self._new_api_token("other reader")
+        with patch("app.main._validate_public_http_url", AsyncMock(return_value="https://example.com/video")):
+            client = TestClient(app)
+            try:
+                created = client.post("/api/v1/jobs", headers={"Authorization": f"Bearer {token_a}"}, json={"url":"https://example.com/video"})
+                self.assertEqual(created.status_code, 201)
+                job_id = created.json()["id"]
+                folder = storage.DOWNLOAD_DIR / job_id
+                folder.mkdir(parents=True, exist_ok=True)
+                file_path = folder / "sample.txt"
+                file_path.write_text("downloaded")
+                storage.update_job(job_id, status="SUCCEEDED", file_path=str(file_path))
+                self.assertEqual(client.get(f"/api/v1/jobs/{job_id}/file", headers={"Authorization": f"Bearer {token_b}"}).status_code, 404)
+                downloaded = client.get(f"/api/v1/jobs/{job_id}/file", headers={"Authorization": f"Bearer {token_a}"})
+                self.assertEqual(downloaded.status_code, 200)
+                self.assertEqual(downloaded.text, "downloaded")
+                self.assertIn("no-store", downloaded.headers["cache-control"])
+                with storage.connect() as db:
+                    db.execute("UPDATE api_tokens SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?", (id_a,))
+                self.assertEqual(client.get("/api/v1/jobs", headers={"Authorization": f"Bearer {token_a}"}).status_code, 401)
+            finally:
+                client.close()
+
+    def test_api_creation_limit(self):
+        token, _ = self._new_api_token("rate limited")
+        client = TestClient(app)
+        try:
+            with patch("app.main._validate_public_http_url", AsyncMock(side_effect=lambda value: value)):
+                responses = [client.post("/api/v1/jobs", headers={"Authorization": f"Bearer {token}"}, json={"url": f"https://example.com/video/{index}"}) for index in range(11)]
+            self.assertTrue(all(response.status_code == 201 for response in responses[:10]))
+            self.assertEqual(responses[10].status_code, 429)
+            self.assertEqual(responses[10].headers["Retry-After"], "60")
+        finally:
+            client.close()
+
+    def test_api_job_uses_shared_cookie_jar(self):
+        token, _ = self._new_api_token("cookie agent")
+        cookies.save_imported_cookie_file(jar(".example.com"))
+        client = TestClient(app)
+        try:
+            with patch("app.main._validate_public_http_url", AsyncMock(return_value="https://example.com/video")):
+                response = client.post("/api/v1/jobs", headers={"Authorization": f"Bearer {token}"}, json={"url":"https://example.com/video"})
+            self.assertEqual(response.status_code, 201, response.text)
+            job = storage.get_job(response.json()["id"])
+            self.assertEqual(job["api_token_id"], token.split("_")[1])
+            async def run_with_mock_process():
+                process = AsyncMock()
+                process.stdout = asyncio.StreamReader()
+                process.stdout.feed_eof()
+                process.stderr = asyncio.StreamReader()
+                process.stderr.feed_eof()
+                process.wait.return_value = 1
+                selected = Runtime("test", "/selected/runtime/python", "2026.10.01", "stable")
+                with patch("app.services.downloader.asyncio.create_subprocess_exec", AsyncMock(return_value=process)) as launch, patch("app.services.downloader.yt_dlp_runtime.active", return_value=selected):
+                    await downloader.run_download(job, AsyncMock())
+                self.assertIn("--cookies", launch.call_args.args)
+            asyncio.run(run_with_mock_process())
+            self.assertNotIn("cookie_path", response.text)
+        finally:
+            client.close()
+
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_browser_rejects_export_after_job_switch(self):

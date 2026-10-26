@@ -107,6 +107,28 @@
         </form>
         <p id="yt-dlp-message" class="form-message" role="status" aria-live="polite"></p>
       </article>
+
+      <article class="panel settings-panel token-panel">
+        <div class="panel-kicker"><span class="step-index">05</span><span>API ACCESS</span></div>
+        <h2>API Token</h2>
+        <p class="settings-copy">持有建立工作權限的電腦或 agent 可使用此服務保存的網站 Cookies 下載內容。只把 token 交給可信任的客戶端，並透過 HTTPS 連線。</p>
+        <form id="token-form" class="token-form">
+          <label for="token-name">名稱</label>
+          <input id="token-name" name="name" type="text" maxlength="100" placeholder="例如：家中自動化 agent" required>
+          <label for="token-expiry">有效期限</label>
+          <select id="token-expiry" name="expires_in_days"><option value="30">30 天</option><option value="365" selected>1 年</option><option value="">永不過期</option></select>
+          <fieldset><legend>權限</legend>
+            <label><input type="checkbox" name="scope" value="jobs:create" checked>建立工作（可使用共用 Cookies）</label>
+            <label><input type="checkbox" name="scope" value="jobs:read" checked>查詢工作</label>
+            <label><input type="checkbox" name="scope" value="jobs:cancel" checked>取消工作</label>
+            <label><input type="checkbox" name="scope" value="files:read">下載完成檔案</label>
+          </fieldset>
+          <button class="secondary" type="submit">建立 Token</button>
+        </form>
+        <div id="token-message" class="form-message" role="status"></div>
+        <div id="token-once" class="token-once" hidden><p>請立即複製並妥善保存，完整 token 只顯示這一次。</p><code id="token-value"></code><button id="copy-token" class="quiet small-button" type="button">複製</button></div>
+        <div id="token-list" class="token-list" aria-live="polite"></div>
+      </article>
     </section>
 
     <footer class="footer-note"><span>NegaDownloader <b>·</b> PRIVATE MEDIA TOOL</span><span>請透過可信任網路使用；外網存取請使用 HTTPS。</span></footer>

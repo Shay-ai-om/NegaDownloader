@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import ipaddress
 import os
+import re
 import secrets
 import socket
 from contextlib import asynccontextmanager
@@ -11,8 +12,9 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -35,7 +37,7 @@ from app.services.cookies import (
 from app.services.downloader import cancel_download, run_download
 from app.services.sites import can_login, prefetch
 from app.services.yt_dlp_runtime import UpdateBusy, UpdateError, yt_dlp_runtime
-from app.services.storage import CONFIG_DIR, DOWNLOAD_DIR, TEMP_DIR, cancel_queued_job, clear_job_history, clear_queued_jobs, create_job, finish_running_job, get_download_subdir, get_job, init_db, list_jobs, next_queued_job, normalize_download_subdir, prepare_storage, set_download_subdir, update_job
+from app.services.storage import ApiLimitError, IdempotencyConflict, CONFIG_DIR, DOWNLOAD_DIR, TEMP_DIR, authenticate_api_token, cancel_queued_job, clear_job_history, clear_queued_jobs, create_agent_job, create_api_token, create_job, finish_running_job, get_agent_job, get_download_subdir, get_job, init_db, list_agent_jobs, list_api_tokens, list_jobs, next_queued_job, normalize_download_subdir, prepare_storage, revoke_api_token, set_download_subdir, update_job
 
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -114,7 +116,7 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    if request.url.path.endswith("/vnc.html") or request.url.path.endswith("/auth-session"):
+    if request.url.path.endswith("/vnc.html") or request.url.path.endswith("/auth-session") or request.url.path.startswith(("/api/v1/", "/api/tokens")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -139,6 +141,30 @@ class ClearJobsRequest(BaseModel):
 
 class UpdateYtDlpRequest(BaseModel):
     channel: Literal["stable", "nightly"] = "stable"
+
+
+class CreateApiTokenRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    scopes: list[Literal["jobs:create", "jobs:read", "jobs:cancel", "files:read"]]
+    expires_in_days: int | None = Field(default=365, ge=1, le=3650)
+
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def require_api_token(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)) -> dict:
+    token = await asyncio.to_thread(authenticate_api_token, credentials.credentials) if credentials and credentials.scheme.lower() == "bearer" else None
+    if not token:
+        raise HTTPException(status_code=401, detail="API token 無效或已過期。", headers={"WWW-Authenticate": "Bearer"})
+    return token
+
+
+def require_api_scope(scope: str):
+    async def check(token: dict = Depends(require_api_token)) -> dict:
+        if scope not in token["scopes"].split(","):
+            raise HTTPException(status_code=403, detail="API token 沒有此操作權限。")
+        return token
+    return check
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -224,6 +250,17 @@ def _serialize_jobs(jobs: list[dict]) -> list[dict]:
     return [_serialize_job(job) for job in jobs]
 
 
+def _serialize_agent_job(job: dict) -> dict:
+    file_path = job.get("file_path")
+    return {
+        "id": job["id"], "url": _safe_display_url(job["url"]),
+        "status": job["status"], "progress": job["progress"],
+        "filename": Path(file_path).name if file_path else None,
+        "error": job.get("error"), "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+    }
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -298,6 +335,80 @@ async def home(request: Request):
             "download_root": str(DOWNLOAD_DIR),
         },
     )
+
+
+@app.get("/api/tokens")
+async def web_list_tokens(_: None = Depends(require_session)):
+    return {"tokens": await asyncio.to_thread(list_api_tokens)}
+
+
+@app.post("/api/tokens", status_code=201)
+async def web_create_token(request: Request, body: CreateApiTokenRequest, _: None = Depends(require_session)):
+    _check_csrf(request, request.headers.get("x-csrf-token"))
+    try:
+        details, token = await asyncio.to_thread(create_api_token, body.name, set(body.scopes), body.expires_in_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"token": token, "details": details}
+
+
+@app.delete("/api/tokens/{token_id}")
+async def web_revoke_token(token_id: str, request: Request, _: None = Depends(require_session)):
+    _check_csrf(request, request.headers.get("x-csrf-token"))
+    if not await asyncio.to_thread(revoke_api_token, token_id):
+        raise HTTPException(status_code=404, detail="找不到有效的 API token。")
+    return {"revoked": True}
+
+
+@app.post("/api/v1/jobs", status_code=201)
+async def v1_create_job(
+    body: CreateJobRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    token: dict = Depends(require_api_scope("jobs:create")),
+):
+    if idempotency_key is not None and (len(idempotency_key) < 8 or len(idempotency_key) > 128 or not re.fullmatch(r"[A-Za-z0-9._:-]+", idempotency_key)):
+        raise HTTPException(status_code=400, detail="Idempotency-Key 格式無效。")
+    url = await _validate_public_http_url(body.url)
+    try:
+        job, replayed = await asyncio.to_thread(create_agent_job, url, token["id"], idempotency_key)
+    except IdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail="此 Idempotency-Key 已用於不同請求。") from exc
+    except ApiLimitError as exc:
+        raise HTTPException(status_code=429, detail="此 token 的建立頻率或待處理工作已達上限。", headers={"Retry-After": "60"}) from exc
+    return JSONResponse(_serialize_agent_job(job), status_code=200 if replayed else 201)
+
+
+@app.get("/api/v1/jobs")
+async def v1_list_jobs(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    token: dict = Depends(require_api_scope("jobs:read")),
+):
+    jobs, total = await asyncio.to_thread(list_agent_jobs, token["id"], limit, offset)
+    return {"jobs": [_serialize_agent_job(job) for job in jobs], "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/api/v1/jobs/{job_id}")
+async def v1_get_job(job_id: str, token: dict = Depends(require_api_scope("jobs:read"))):
+    job = await asyncio.to_thread(get_agent_job, job_id, token["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail="找不到下載工作。")
+    return _serialize_agent_job(job)
+
+
+@app.post("/api/v1/jobs/{job_id}/cancel")
+async def v1_cancel_job(job_id: str, token: dict = Depends(require_api_scope("jobs:cancel"))):
+    job = await asyncio.to_thread(get_agent_job, job_id, token["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail="找不到下載工作。")
+    await _cancel_existing_job(job_id, job)
+    return {"status": "CANCELLED"}
+
+
+@app.get("/api/v1/jobs/{job_id}/file")
+async def v1_download_file(job_id: str, token: dict = Depends(require_api_scope("files:read"))):
+    job = await asyncio.to_thread(get_agent_job, job_id, token["id"])
+    return _job_file_response(job)
 
 
 @app.get("/api/jobs")
@@ -486,6 +597,11 @@ async def stop_job(job_id: str, request: Request, _: None = Depends(require_sess
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="找不到下載工作。")
+    await _cancel_existing_job(job_id, job)
+    return {"status": "CANCELLED"}
+
+
+async def _cancel_existing_job(job_id: str, job: dict) -> None:
     if job["status"] == "QUEUED":
         if not cancel_queued_job(job_id):
             refreshed = get_job(job_id)
@@ -499,18 +615,20 @@ async def stop_job(job_id: str, request: Request, _: None = Depends(require_sess
         update_job(job_id, status="CANCELLED", error=None)
     else:
         raise HTTPException(status_code=409, detail="此工作目前無法取消。")
-    return {"status": "CANCELLED"}
 
 
-@app.get("/api/jobs/{job_id}/file")
-async def download_file(job_id: str, _: None = Depends(require_session)):
-    job = get_job(job_id)
+def _job_file_response(job: dict | None) -> FileResponse:
     if not job or job["status"] != "SUCCEEDED" or not job.get("file_path"):
         raise HTTPException(status_code=404, detail="檔案尚未就緒。")
     candidate = Path(job["file_path"]).resolve()
     if not candidate.is_relative_to(DOWNLOAD_DIR) or not candidate.is_file():
         raise HTTPException(status_code=404, detail="找不到下載檔案。")
-    return FileResponse(candidate, filename=candidate.name)
+    return FileResponse(candidate, filename=candidate.name, headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/api/jobs/{job_id}/file")
+async def download_file(job_id: str, _: None = Depends(require_session)):
+    return _job_file_response(get_job(job_id))
 
 
 @app.get("/api/auth/status")

@@ -17,6 +17,10 @@
   const engineMessage = document.getElementById('yt-dlp-message');
   const engineUpdate = document.getElementById('update-yt-dlp');
   const engineRollback = document.getElementById('rollback-yt-dlp');
+  const tokenForm = document.getElementById('token-form');
+  const tokenList = document.getElementById('token-list');
+  const tokenMessage = document.getElementById('token-message');
+  const tokenOnce = document.getElementById('token-once');
   let engineRequestPending = false;
   let engineStatus = null;
   let activeAuthJob = null;
@@ -89,6 +93,48 @@
     changeEngine('update');
   });
   engineRollback?.addEventListener('click', () => changeEngine('rollback'));
+
+  async function refreshTokens() {
+    if (!tokenList) return;
+    try {
+      const result = await api('/api/tokens');
+      tokenList.innerHTML = result.tokens.length ? result.tokens.map(token => `<div class="token-row"><div><strong>${escapeHtml(token.name)}</strong><small>${escapeHtml(token.prefix)} · ${escapeHtml(token.scopes)} · ${token.revoked_at ? '已撤銷' : token.expires_at ? `到期 ${escapeHtml(token.expires_at)}` : '永不過期'}</small></div>${token.revoked_at ? '' : `<button class="quiet small-button revoke-token" data-token-id="${escapeHtml(token.id)}" type="button">撤銷</button>`}</div>`).join('') : '<p class="settings-copy">尚未建立 API token。</p>';
+    } catch (error) { tokenMessage.textContent = error.message; }
+  }
+
+  tokenForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    tokenMessage.textContent = '';
+    const button = tokenForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      const scopes = Array.from(tokenForm.querySelectorAll('input[name="scope"]:checked'), input => input.value);
+      const expiry = document.getElementById('token-expiry').value;
+      const result = await api('/api/tokens', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('token-name').value, scopes, expires_in_days:expiry ? Number(expiry) : null})});
+      document.getElementById('token-value').textContent = result.token;
+      tokenOnce.hidden = false;
+      tokenMessage.style.color = 'var(--green)'; tokenMessage.textContent = 'Token 已建立。';
+      tokenForm.reset();
+      await refreshTokens();
+    } catch (error) { tokenMessage.style.color = 'var(--red)'; tokenMessage.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+
+  tokenList?.addEventListener('click', async event => {
+    const button = event.target.closest('.revoke-token');
+    if (!button || !window.confirm('確定撤銷此 API token？此操作會立即阻止後續 API 請求。')) return;
+    button.disabled = true;
+    try {
+      await api(`/api/tokens/${encodeURIComponent(button.dataset.tokenId)}`, {method:'DELETE'});
+      tokenMessage.style.color = 'var(--green)'; tokenMessage.textContent = 'Token 已撤銷。';
+      await refreshTokens();
+    } catch (error) { tokenMessage.style.color = 'var(--red)'; tokenMessage.textContent = error.message; button.disabled = false; }
+  });
+
+  document.getElementById('copy-token')?.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(document.getElementById('token-value').textContent); tokenMessage.textContent = '已複製 token。'; }
+    catch (_) { tokenMessage.textContent = '無法自動複製，請手動選取 token。'; }
+  });
 
   function renderJobs(jobs) {
     if (!jobs.length) {
@@ -276,6 +322,7 @@
   if (jobsRoot) {
     refreshJobs();
     refreshEngine();
+    refreshTokens();
     timer = window.setInterval(async () => { await Promise.all([refreshJobs(), refreshEngine()]); }, 3000);
     window.addEventListener('pagehide', () => window.clearInterval(timer), {once:true});
   }
