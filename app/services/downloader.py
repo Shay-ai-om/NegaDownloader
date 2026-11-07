@@ -63,6 +63,14 @@ def is_auth_error(error_text: str, url: str = "") -> bool:
         return False
 
 
+def _is_bilibili_url(value: str) -> bool:
+    try:
+        host = (urlsplit(value).hostname or "").lower().rstrip(".")
+        return host == "b23.tv" or host == "bilibili.com" or host.endswith(".bilibili.com")
+    except ValueError:
+        return False
+
+
 def _safe_url(value: str) -> str:
     try:
         parts = urlsplit(value)
@@ -114,7 +122,7 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
     if folder.parent != download_root:
         return {"status": "FAILED", "error": "下載路徑無效。"}
     folder.mkdir(parents=True, exist_ok=True)
-    output_template = str(folder / "%(title).180B-%(id)s.%(ext)s")
+    output_template = "%(title).180B-%(id)s.%(ext)s"
     runtime = await asyncio.to_thread(yt_dlp_runtime.active)
     args = runtime.command() + [
         "--ignore-config",
@@ -140,6 +148,8 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
     elif snapshot_cookies(snapshot_path):
         cookie_path = str(snapshot_path)
         args.extend(("--cookies", cookie_path))
+    if _is_bilibili_url(job["url"]):
+        args.extend(("--add-headers", "Range:bytes=0-"))
     if job.get("user_agent"):
         args.extend(("--user-agent", job["user_agent"]))
     args.append(job["url"])
