@@ -25,7 +25,7 @@ PUID=99
 PGID=100
 ```
 
-In Unraid's Docker template, map the appdata directory read/write to `/app/data` and your chosen media share read/write to `/app/download`. The interactive browser runs inside the container; publish only host port `20880` to container port `8080` (`20880:8080`). Do not publish the internal VNC/noVNC ports. Use a reverse proxy with TLS and WebSocket support for remote access.
+In Unraid's Docker template, use these exact, case-sensitive container paths: map the appdata directory read/write to `/app/data` and your chosen media share read/write to `/app/download` (singular). `/app/downloads` is not used. Older images used `/config` and `/downloads`; when upgrading an existing container, keep the same host directories and change their container targets to `/app/data` and `/app/download`. The interactive browser runs inside the container; publish only host port `20880` to container port `8080` (`20880:8080`). Do not publish the internal VNC/noVNC ports. Use a reverse proxy with TLS and WebSocket support for remote access.
 
 ## Prebuilt image and Unraid template
 

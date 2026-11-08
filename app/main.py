@@ -10,7 +10,7 @@ import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -190,9 +190,15 @@ def _safe_display_url(url: str) -> str:
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
+        normalized_host = host.lower().rstrip(".")
         if parts.port:
             host = f"{host}:{parts.port}"
-        return urlunsplit((parts.scheme, host, parts.path, "", ""))
+        safe_query = ""
+        if normalized_host == "youtube.com" or normalized_host.endswith(".youtube.com"):
+            video_id = parse_qs(parts.query).get("v", [""])[0]
+            if re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+                safe_query = urlencode({"v": video_id})
+        return urlunsplit((parts.scheme, host, parts.path, safe_query, ""))
     except Exception:
         return "網址"
 
