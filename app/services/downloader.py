@@ -103,7 +103,15 @@ async def cancel_download(job_id: str) -> bool:
     try:
         process.terminate()
     except ProcessLookupError:
-        pass
+        return True
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
     return True
 
 
@@ -114,45 +122,54 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
         _cancelled.discard(job_id)
         _discard_job_cookie(job.get("cookie_path"))
         return {"status": "CANCELLED", "error": None}
-    configured_subdir = str(job.get("download_subdir") or "")
-    download_root = (DOWNLOAD_DIR / configured_subdir).resolve()
-    if not download_root.is_relative_to(DOWNLOAD_DIR):
-        return {"status": "FAILED", "error": "下載路徑無效。"}
-    folder = (download_root / job_id).resolve()
-    if folder.parent != download_root:
-        return {"status": "FAILED", "error": "下載路徑無效。"}
-    folder.mkdir(parents=True, exist_ok=True)
-    output_template = "%(title).180B-%(id)s.%(ext)s"
-    runtime = await asyncio.to_thread(yt_dlp_runtime.active)
-    args = runtime.command() + [
-        "--ignore-config",
-        "--newline",
-        "--progress",
-        "--continue",
-        "--paths",
-        f"home:{folder}",
-        "-o",
-        output_template,
-        "--print",
-        "after_move:filepath",
-    ]
     cookie_path = job.get("cookie_path")
-    snapshot_path = TEMP_DIR / f"{job_id}.txt"
-    if cookie_path:
-        candidate = Path(cookie_path).resolve()
-        if candidate.is_file():
-            args.extend(("--cookies", str(candidate)))
+    try:
+        configured_subdir = str(job.get("download_subdir") or "")
+        download_root = (DOWNLOAD_DIR / configured_subdir).resolve()
+        if not download_root.is_relative_to(DOWNLOAD_DIR):
+            _discard_job_cookie(cookie_path)
+            return {"status": "FAILED", "error": "下載路徑無效。"}
+        folder = (download_root / job_id).resolve()
+        if folder.parent != download_root:
+            _discard_job_cookie(cookie_path)
+            return {"status": "FAILED", "error": "下載路徑無效。"}
+        folder.mkdir(parents=True, exist_ok=True)
+        output_template = "%(title).180B-%(id)s.%(ext)s"
+        runtime = await asyncio.to_thread(yt_dlp_runtime.active)
+        args = runtime.command() + [
+            "--ignore-config",
+            "--newline",
+            "--progress",
+            "--continue",
+            "--paths",
+            f"home:{folder}",
+            "-o",
+            output_template,
+            "--print",
+            "after_move:filepath",
+        ]
+        snapshot_path = TEMP_DIR / f"{job_id}.txt"
+        if cookie_path:
+            candidate = Path(cookie_path).resolve()
+            if candidate.is_file():
+                args.extend(("--cookies", str(candidate)))
+            elif snapshot_cookies(snapshot_path):
+                cookie_path = str(snapshot_path)
+                args.extend(("--cookies", cookie_path))
         elif snapshot_cookies(snapshot_path):
             cookie_path = str(snapshot_path)
             args.extend(("--cookies", cookie_path))
-    elif snapshot_cookies(snapshot_path):
-        cookie_path = str(snapshot_path)
-        args.extend(("--cookies", cookie_path))
-    if _is_bilibili_url(job["url"]):
-        args.extend(("--add-headers", "Range:bytes=0-"))
-    if job.get("user_agent"):
-        args.extend(("--user-agent", job["user_agent"]))
-    args.append(job["url"])
+        if _is_bilibili_url(job["url"]):
+            args.extend(("--add-headers", "Range:bytes=0-"))
+        if job.get("user_agent"):
+            args.extend(("--user-agent", job["user_agent"]))
+        args.append(job["url"])
+    except asyncio.CancelledError:
+        _discard_job_cookie(cookie_path)
+        raise
+    except Exception as exc:
+        _discard_job_cookie(cookie_path)
+        return {"status": "FAILED", "error": f"無法準備下載；請檢查下載目錄與設定目錄權限：{type(exc).__name__}"}
 
     stderr_lines: list[str] = []
     stdout_lines: list[str] = []
@@ -225,14 +242,34 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
     except asyncio.CancelledError:
         process = _active.get(job_id)
         if process and process.returncode is None:
-            process.terminate()
-            await process.wait()
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
         raise
     except asyncio.TimeoutError:
         process = _active.get(job_id)
         if process and process.returncode is None:
-            process.terminate()
-            await process.wait()
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
         return {"status": "FAILED", "error": "下載逾時；確認網路後可重新建立工作。"}
     except Exception as exc:
         # Keep process details out of persistent logs; only expose a short generic failure.

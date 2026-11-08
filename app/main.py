@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import ipaddress
+import logging
 import os
 import secrets
 import socket
@@ -43,6 +44,7 @@ TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
 MAX_URL_LENGTH = 4096
 PASSWORD = os.environ.get("NEGADOWNLOADER_PASSWORD") or os.environ.get("YOULOGGER_PASSWORD", "")
 COOKIE_SECURE = os.environ.get("NEGADOWNLOADER_COOKIE_SECURE", os.environ.get("YOULOGGER_COOKIE_SECURE", "false")).lower() == "true"
+logger = logging.getLogger(__name__)
 
 
 def _load_session_secret() -> str:
@@ -63,18 +65,34 @@ ticket_serializer = URLSafeTimedSerializer(SESSION_SECRET, salt="youlogger-brows
 
 async def _download_worker() -> None:
     while True:
-        job = next_queued_job()
-        if job is None:
+        job = None
+        try:
+            job = next_queued_job()
+            if job is None:
+                await asyncio.sleep(1)
+                continue
+
+            async def update_progress(value: float) -> None:
+                update_job(job["id"], progress=value)
+
+            result = await run_download(job, update_progress)
+            finish_running_job(job["id"], **result)
+            if result.get("status") in ("SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_AUTH"):
+                update_job(job["id"], cookie_path=None, user_agent=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Download worker encountered an error (%s)", type(exc).__name__)
+            if job:
+                try:
+                    finish_running_job(
+                        job["id"],
+                        status="FAILED",
+                        error=f"下載工作發生內部錯誤：{type(exc).__name__}。worker 將繼續處理其他工作。",
+                    )
+                except Exception as finish_error:
+                    logger.error("Could not finalize failed download (%s)", type(finish_error).__name__)
             await asyncio.sleep(1)
-            continue
-
-        async def update_progress(value: float) -> None:
-            update_job(job["id"], progress=value)
-
-        result = await run_download(job, update_progress)
-        finish_running_job(job["id"], **result)
-        if result.get("status") in ("SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_AUTH"):
-            update_job(job["id"], cookie_path=None, user_agent=None)
 
 
 @asynccontextmanager
