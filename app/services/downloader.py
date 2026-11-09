@@ -129,10 +129,10 @@ async def run_download(job: dict, progress_callback: ProgressCallback) -> dict:
         if not download_root.is_relative_to(DOWNLOAD_DIR):
             _discard_job_cookie(cookie_path)
             return {"status": "FAILED", "error": "下載路徑無效。"}
-        folder = (download_root / job_id).resolve()
-        if folder.parent != download_root:
-            _discard_job_cookie(cookie_path)
-            return {"status": "FAILED", "error": "下載路徑無效。"}
+        # Keep per-job IDs in the database and temporary cookie paths only.
+        # Download media directly into the configured destination so users
+        # do not have to open an opaque job-ID directory for every item.
+        folder = download_root
         folder.mkdir(parents=True, exist_ok=True)
         output_template = "%(title).180B-%(id)s.%(ext)s"
         runtime = await asyncio.to_thread(yt_dlp_runtime.active)

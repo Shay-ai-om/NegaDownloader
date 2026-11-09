@@ -74,7 +74,7 @@ The embedded browser runs inside NegaDownloader. The app does not receive the pa
 - `/app/data/auth/instagram-browser/`: dedicated multi-site Chromium profile; the legacy directory name preserves existing sessions.
 - `/app/data/auth/temporary/`: isolated per-job cookie snapshots, deleted after download completion, failure, or cancellation.
 - `/app/data/runtime/yt-dlp/`: saved update environments, active/previous selections, and update status.
-- `/app/download/<subfolder>/<job-id>/`: downloaded media.
+- `/app/download/<subfolder>/`: downloaded media. When no subfolder is configured, files go directly into `/app/download`; downloads are no longer wrapped in a per-job ID directory. Previously downloaded files in older job-ID directories are left in place.
 
 The `/app/data` and `/app/download` bind mounts survive image rebuilds. When updating, run `docker compose up -d --build` from the project directory.
 
