@@ -190,17 +190,26 @@ def _safe_display_url(url: str) -> str:
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
-        normalized_host = host.lower().rstrip(".")
-        if parts.port:
-            host = f"{host}:{parts.port}"
-        safe_query = ""
-        if normalized_host == "youtube.com" or normalized_host.endswith(".youtube.com"):
+    except Exception as exc:
+        logger.warning("Could not parse a job URL for display (%s)", type(exc).__name__)
+        return "網址"
+    if not host:
+        return "網址"
+    try:
+        port = parts.port
+    except ValueError as exc:
+        logger.warning("Could not read a job URL port for display (%s)", type(exc).__name__)
+        port = None
+    display_host = f"{host}:{port}" if port else host
+    safe_query = ""
+    if host.lower().rstrip(".") == "youtube.com" or host.lower().rstrip(".").endswith(".youtube.com"):
+        try:
             video_id = parse_qs(parts.query).get("v", [""])[0]
             if re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
                 safe_query = urlencode({"v": video_id})
-        return urlunsplit((parts.scheme, host, parts.path, safe_query, ""))
-    except Exception:
-        return "網址"
+        except Exception as exc:
+            logger.warning("Could not read a YouTube video ID for display (%s)", type(exc).__name__)
+    return urlunsplit((parts.scheme, display_host, parts.path, safe_query, ""))
 
 
 async def _validate_public_http_url(value: str) -> str:
