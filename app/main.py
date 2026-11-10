@@ -10,7 +10,7 @@ import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -186,7 +186,17 @@ def _new_csrf(request: Request) -> str:
     return token
 
 
-def _safe_display_url(url: str) -> str:
+_YOUTUBE_VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
+
+
+def _video_id_from_filename(filename: str | None) -> str | None:
+    if not filename:
+        return None
+    match = re.search(r"-([A-Za-z0-9_-]{11})$", Path(filename).stem)
+    return match.group(1) if match else None
+
+
+def _safe_display_url(url: str, fallback_video_id: str | None = None) -> str:
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
@@ -204,8 +214,21 @@ def _safe_display_url(url: str) -> str:
     safe_query = ""
     if host.lower().rstrip(".") == "youtube.com" or host.lower().rstrip(".").endswith(".youtube.com"):
         try:
-            video_id = parse_qs(parts.query).get("v", [""])[0]
-            if re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            video_id = next(
+                (
+                    value
+                    for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                    if key == "v" and _YOUTUBE_VIDEO_ID_RE.fullmatch(value)
+                ),
+                None,
+            )
+            if (
+                not video_id
+                and parts.path.rstrip("/") == "/watch"
+                and _YOUTUBE_VIDEO_ID_RE.fullmatch(fallback_video_id or "")
+            ):
+                video_id = fallback_video_id
+            if video_id:
                 safe_query = urlencode({"v": video_id})
         except Exception as exc:
             logger.warning("Could not read a YouTube video ID for display (%s)", type(exc).__name__)
@@ -239,9 +262,10 @@ async def _validate_public_http_url(value: str) -> str:
 def _serialize_job(job: dict) -> dict:
     file_path = job.get("file_path")
     filename = Path(file_path).name if file_path else None
+    fallback_video_id = _video_id_from_filename(filename) if job["status"] == "SUCCEEDED" else None
     return {
         "id": job["id"],
-        "url": _safe_display_url(job["url"]),
+        "url": _safe_display_url(job["url"], fallback_video_id),
         "status": job["status"],
         "progress": job["progress"],
         "filename": filename,
