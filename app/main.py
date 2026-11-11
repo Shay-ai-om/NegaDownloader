@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import ipaddress
+import logging
 import os
 import re
 import secrets
@@ -10,7 +11,7 @@ import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -45,6 +46,7 @@ TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
 MAX_URL_LENGTH = 4096
 PASSWORD = os.environ.get("NEGADOWNLOADER_PASSWORD") or os.environ.get("YOULOGGER_PASSWORD", "")
 COOKIE_SECURE = os.environ.get("NEGADOWNLOADER_COOKIE_SECURE", os.environ.get("YOULOGGER_COOKIE_SECURE", "false")).lower() == "true"
+logger = logging.getLogger(__name__)
 
 
 def _load_session_secret() -> str:
@@ -65,18 +67,34 @@ ticket_serializer = URLSafeTimedSerializer(SESSION_SECRET, salt="youlogger-brows
 
 async def _download_worker() -> None:
     while True:
-        job = next_queued_job()
-        if job is None:
+        job = None
+        try:
+            job = next_queued_job()
+            if job is None:
+                await asyncio.sleep(1)
+                continue
+
+            async def update_progress(value: float) -> None:
+                update_job(job["id"], progress=value)
+
+            result = await run_download(job, update_progress)
+            finish_running_job(job["id"], **result)
+            if result.get("status") in ("SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_AUTH"):
+                update_job(job["id"], cookie_path=None, user_agent=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Download worker encountered an error (%s)", type(exc).__name__)
+            if job:
+                try:
+                    finish_running_job(
+                        job["id"],
+                        status="FAILED",
+                        error=f"下載工作發生內部錯誤：{type(exc).__name__}。worker 將繼續處理其他工作。",
+                    )
+                except Exception as finish_error:
+                    logger.error("Could not finalize failed download (%s)", type(finish_error).__name__)
             await asyncio.sleep(1)
-            continue
-
-        async def update_progress(value: float) -> None:
-            update_job(job["id"], progress=value)
-
-        result = await run_download(job, update_progress)
-        finish_running_job(job["id"], **result)
-        if result.get("status") in ("SUCCEEDED", "FAILED", "CANCELLED", "NEEDS_AUTH"):
-            update_job(job["id"], cookie_path=None, user_agent=None)
 
 
 @asynccontextmanager
@@ -194,15 +212,53 @@ def _new_csrf(request: Request) -> str:
     return token
 
 
-def _safe_display_url(url: str) -> str:
+_YOUTUBE_VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
+
+
+def _video_id_from_filename(filename: str | None) -> str | None:
+    if not filename:
+        return None
+    match = re.search(r"-([A-Za-z0-9_-]{11})$", Path(filename).stem)
+    return match.group(1) if match else None
+
+
+def _safe_display_url(url: str, fallback_video_id: str | None = None) -> str:
     try:
         parts = urlsplit(url)
         host = parts.hostname or ""
-        if parts.port:
-            host = f"{host}:{parts.port}"
-        return urlunsplit((parts.scheme, host, parts.path, "", ""))
-    except Exception:
+    except Exception as exc:
+        logger.warning("Could not parse a job URL for display (%s)", type(exc).__name__)
         return "網址"
+    if not host:
+        return "網址"
+    try:
+        port = parts.port
+    except ValueError as exc:
+        logger.warning("Could not read a job URL port for display (%s)", type(exc).__name__)
+        port = None
+    display_host = f"{host}:{port}" if port else host
+    safe_query = ""
+    if host.lower().rstrip(".") == "youtube.com" or host.lower().rstrip(".").endswith(".youtube.com"):
+        try:
+            video_id = next(
+                (
+                    value
+                    for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                    if key == "v" and _YOUTUBE_VIDEO_ID_RE.fullmatch(value)
+                ),
+                None,
+            )
+            if (
+                not video_id
+                and parts.path.rstrip("/") == "/watch"
+                and _YOUTUBE_VIDEO_ID_RE.fullmatch(fallback_video_id or "")
+            ):
+                video_id = fallback_video_id
+            if video_id:
+                safe_query = urlencode({"v": video_id})
+        except Exception as exc:
+            logger.warning("Could not read a YouTube video ID for display (%s)", type(exc).__name__)
+    return urlunsplit((parts.scheme, display_host, parts.path, safe_query, ""))
 
 
 async def _validate_public_http_url(value: str) -> str:
@@ -232,9 +288,10 @@ async def _validate_public_http_url(value: str) -> str:
 def _serialize_job(job: dict) -> dict:
     file_path = job.get("file_path")
     filename = Path(file_path).name if file_path else None
+    fallback_video_id = _video_id_from_filename(filename) if job["status"] == "SUCCEEDED" else None
     return {
         "id": job["id"],
-        "url": _safe_display_url(job["url"]),
+        "url": _safe_display_url(job["url"], fallback_video_id),
         "status": job["status"],
         "progress": job["progress"],
         "filename": filename,
@@ -252,10 +309,12 @@ def _serialize_jobs(jobs: list[dict]) -> list[dict]:
 
 def _serialize_agent_job(job: dict) -> dict:
     file_path = job.get("file_path")
+    filename = Path(file_path).name if file_path else None
+    fallback_video_id = _video_id_from_filename(filename) if job["status"] == "SUCCEEDED" else None
     return {
-        "id": job["id"], "url": _safe_display_url(job["url"]),
+        "id": job["id"], "url": _safe_display_url(job["url"], fallback_video_id),
         "status": job["status"], "progress": job["progress"],
-        "filename": Path(file_path).name if file_path else None,
+        "filename": filename,
         "error": job.get("error"), "created_at": job["created_at"],
         "updated_at": job["updated_at"],
     }

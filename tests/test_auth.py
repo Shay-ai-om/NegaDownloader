@@ -256,7 +256,7 @@ class ApiTests(unittest.TestCase):
                 created = client.post("/api/v1/jobs", headers={"Authorization": f"Bearer {token_a}"}, json={"url":"https://example.com/video"})
                 self.assertEqual(created.status_code, 201)
                 job_id = created.json()["id"]
-                folder = storage.DOWNLOAD_DIR / job_id
+                folder = storage.DOWNLOAD_DIR
                 folder.mkdir(parents=True, exist_ok=True)
                 file_path = folder / "sample.txt"
                 file_path.write_text("downloaded")
